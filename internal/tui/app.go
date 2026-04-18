@@ -1037,14 +1037,14 @@ func (m Model) renderBody(w, h int) string {
 	p := m.currentProject()
 	a := m.currentAgent()
 	if p == nil {
-		return renderSplash(w, h, "open a project to begin", []string{
+		return m.renderSplash(w, h, "open a project to begin", []string{
 			"o   open project",
 			"?   help",
 			"q   quit",
 		})
 	}
 	if a == nil {
-		return renderSplash(w, h, "no agents in "+p.Name, []string{
+		return m.renderSplash(w, h, "no agents in "+p.Name, []string{
 			"n   spawn agent",
 			"o   open another project",
 			"?   help",
@@ -1117,9 +1117,66 @@ func parseSplashHints(raw []string) []splashHint {
 	return out
 }
 
-func renderSplash(w, h int, subtitle string, keys []string) string {
+// splashPalette — tight pink/magenta ramp only. Avoids 210+ range which
+// skews toward white/cream. Reads as pulsing hot-pink, not pink-and-white.
+var splashPalette = []lipgloss.Color{
+	lipgloss.Color("205"), // hot pink (base)
+	lipgloss.Color("204"),
+	lipgloss.Color("198"),
+	lipgloss.Color("197"), // deep pink
+	lipgloss.Color("161"),
+	lipgloss.Color("125"), // deep magenta
+	lipgloss.Color("89"),  // purple-magenta
+	lipgloss.Color("125"),
+	lipgloss.Color("161"),
+	lipgloss.Color("197"),
+	lipgloss.Color("198"),
+	lipgloss.Color("204"),
+}
+
+// animateArt colors each rune by (column + frame) mod palette length so the
+// palette scrolls horizontally across the art each tick. Pads every line to
+// the widest line's rune count so ragged source art still renders aligned.
+func animateArt(art string, frame int) string {
+	lines := strings.Split(art, "\n")
+	// measure max rune width
+	maxRunes := 0
+	for _, l := range lines {
+		n := 0
+		for range l {
+			n++
+		}
+		if n > maxRunes {
+			maxRunes = n
+		}
+	}
+	out := make([]string, len(lines))
+	for li, line := range lines {
+		var b strings.Builder
+		col := 0
+		for _, r := range line {
+			if r == ' ' {
+				b.WriteRune(r)
+				col++
+				continue
+			}
+			c := splashPalette[(col+frame)%len(splashPalette)]
+			b.WriteString(lipgloss.NewStyle().Foreground(c).Render(string(r)))
+			col++
+		}
+		// right-pad with spaces so lipgloss.Place centers a rectangle, not a
+		// staircase.
+		if col < maxRunes {
+			b.WriteString(strings.Repeat(" ", maxRunes-col))
+		}
+		out[li] = b.String()
+	}
+	return strings.Join(out, "\n")
+}
+
+func (m Model) renderSplash(w, h int, subtitle string, keys []string) string {
 	art := strings.TrimPrefix(asciiMux, "\n")
-	artStyled := lipgloss.NewStyle().Foreground(colorAccent).Render(art)
+	artStyled := animateArt(art, m.spinnerFrame)
 	sub := lipgloss.NewStyle().Foreground(colorDim).Italic(true).Render(subtitle)
 
 	hints := parseSplashHints(keys)
