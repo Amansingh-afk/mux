@@ -575,9 +575,14 @@ func (m Model) handleRenameAgent(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
-		s := k.String()
-		if len(s) == 1 {
-			m.renameBuf += s
+		// use k.Runes so shift+letter (capitals) and other printable chars land
+		// intact. k.String() returns "shift+A" for capitals which len()==1 misses.
+		if len(k.Runes) > 0 {
+			for _, r := range k.Runes {
+				if r >= 0x20 && r != 0x7f {
+					m.renameBuf += string(r)
+				}
+			}
 		}
 		return m, nil
 	}

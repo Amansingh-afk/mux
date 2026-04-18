@@ -60,23 +60,29 @@ func containsAny(s string, runes []rune) bool {
 	return false
 }
 
-// looksWaiting checks whether the tail of the output looks like an idle input
-// prompt waiting for the user (e.g. lines starting with ">", "❯", "$").
+// promptPrefixes are the leading markers CLI agents render when idle-waiting
+// for user input. Must be prefix-only — substring match would false-positive
+// on markdown quotes, diff hunks, and shell output.
+var promptPrefixes = []string{"> ", "❯ ", "$ ", "» ", "│ > ", "▌ > ", "│ >", "▌ >"}
+
+// looksWaiting checks whether the LAST non-empty line of the pane looks like
+// an idle input prompt. Anchoring to the tail avoids false positives from
+// body content (quoted replies, diff output, code blocks) earlier in the pane.
 func looksWaiting(content string) bool {
 	content = strings.TrimRight(content, "\n \t")
 	lines := strings.Split(content, "\n")
-	// check last few non-empty lines
-	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
+	for i := len(lines) - 1; i >= 0; i-- {
 		l := stripANSI(lines[i])
-		l = strings.TrimSpace(l)
-		if l == "" {
+		trimmed := strings.TrimLeft(l, " \t")
+		if strings.TrimSpace(trimmed) == "" {
 			continue
 		}
-		for _, p := range []string{"> ", "❯ ", "$ ", "» ", "│ >", "▌ >"} {
-			if strings.HasPrefix(l, p) || strings.Contains(l, p) {
+		for _, p := range promptPrefixes {
+			if strings.HasPrefix(trimmed, p) {
 				return true
 			}
 		}
+		return false
 	}
 	return false
 }

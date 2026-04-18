@@ -26,9 +26,22 @@ func SessionID(project, provider string, n int) string {
 	return fmt.Sprintf("mux_%s_%s_%d", sanitize(project), provider, n)
 }
 
+// sanitize produces a tmux-safe session name fragment: whitelist [A-Za-z0-9_],
+// everything else → '_'. tmux forbids a few chars (colons, dots, periods are
+// ambiguous in target syntax); blacklist approach missed punctuation like '-',
+// '(', parentheses, commas, shell-meta.
 func sanitize(s string) string {
-	r := strings.NewReplacer("/", "_", ".", "_", " ", "_", ":", "_")
-	return r.Replace(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
 }
 
 // ResumeOpts controls whether Spawn launches the provider in resume mode.
