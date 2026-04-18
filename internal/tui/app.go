@@ -784,15 +784,24 @@ func (m Model) View() string {
 	}
 	tabs := m.renderTabs()
 	status := m.renderStatus()
-	bodyH := m.h - lipgloss.Height(tabs) - lipgloss.Height(status)
+	// one-row breathing gap above and below the body so tabs + status don't
+	// feel flush against content. these empty lines pick up the terminal's
+	// default bg so sidebar/body content reads as a distinct "card."
+	gapTop := ""
+	gapBot := ""
+	bodyH := m.h - lipgloss.Height(tabs) - lipgloss.Height(status) - 2
 	if bodyH < 3 {
 		bodyH = 3
+		gapTop, gapBot = "", ""
+	} else {
+		gapTop = strings.Repeat(" ", m.w)
+		gapBot = gapTop
 	}
 	sidebarW := 26
 	if m.w < 80 {
 		sidebarW = 22
 	}
-	// sidebar inner area = sidebarW minus border (1) + padding (2)
+	// sidebar: padding(2) + right border(1) = -3 from outer width
 	sidebarInnerW := sidebarW - 3
 	if sidebarInnerW < 8 {
 		sidebarInnerW = 8
@@ -807,7 +816,7 @@ func (m Model) View() string {
 	body := styleBody.Width(bodyTotalW).Height(bodyH).Render(m.renderBody(bodyContentW, bodyH))
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, body)
-	view := lipgloss.JoinVertical(lipgloss.Left, tabs, row, status)
+	view := lipgloss.JoinVertical(lipgloss.Left, tabs, gapTop, row, gapBot, status)
 
 	if m.mode == modeOpenProject {
 		return m.overlay(m.renderRepoPicker())
@@ -897,71 +906,115 @@ func truncName(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
+// providerBadge renders a provider name in its brand color. Dead agents
+// can override via the `dim` flag for strikethrough/greyed styling.
+func providerBadge(name string, dim bool) string {
+	spec, ok := session.Providers[name]
+	col := colorDim
+	if ok && spec.Color != "" {
+		col = lipgloss.Color(spec.Color)
+	}
+	st := lipgloss.NewStyle().Foreground(col)
+	if dim {
+		st = lipgloss.NewStyle().Foreground(colorDim).Strikethrough(true)
+	}
+	return st.Render(name)
+}
+
 func (m Model) renderSidebar(w, h int) string {
 	p := m.currentProject()
 	if p == nil {
-		return styleStatus.Render("no project")
+		return styleSectionHeader.Render("NO PROJECT") + "\n" +
+			styleDivider.Render(strings.Repeat("─", min(w, 20))) + "\n\n" +
+			lipgloss.NewStyle().Foreground(colorDim).Render("press o to open")
 	}
-	title := lipgloss.NewStyle().Bold(true).Render("agents")
+
+	header := styleSectionHeader.Render("AGENTS")
+	divider := styleDivider.Render(strings.Repeat("─", min(w, 20)))
+
+	var agentRows []string
 	if len(p.Agents) == 0 {
-		return clipLine(title, w) + "\n" + clipLine(styleStatus.Render("press n to spawn"), w)
-	}
-
-	// build all rows first, then viewport-window them so cursor stays visible
-	// and total rows fit in h. reserve 1 row for title, 1 for overflow hint.
-	rows := make([]string, 0, len(p.Agents))
-	for i, a := range p.Agents {
-		icon := m.statusIcon(a.ID)
-		label := a.Name
-		if label == "" {
-			label = fmt.Sprintf("agent-%d", i+1)
+		agentRows = []string{
+			lipgloss.NewStyle().Foreground(colorDim).Italic(true).Render("  press n to spawn"),
 		}
-		dead := a.Dead || !m.aliveCache[a.ID]
-		labelStyle := lipgloss.NewStyle()
-		provStyle := lipgloss.NewStyle().Foreground(colorDim)
-		if dead {
-			labelStyle = labelStyle.Foreground(colorDim).Strikethrough(true)
-			provStyle = provStyle.Strikethrough(true)
-		}
-		provText := provStyle.Render(a.Provider)
-		var row string
-		if i == m.sidebarCur {
-			marker := styleSelMarker.Render("▸")
-			if dead {
-				row = marker + " " + icon + " " + labelStyle.Render(label) + " " + provText
-			} else {
-				selLabel := styleListItemSel.Render(label)
-				selProv := styleListItemSel.Render(a.Provider)
-				row = marker + " " + icon + " " + selLabel + " " + selProv
+	} else {
+		agentRows = make([]string, 0, len(p.Agents))
+		for i, a := range p.Agents {
+			icon := m.statusIcon(a.ID)
+			label := a.Name
+			if label == "" {
+				label = fmt.Sprintf("agent-%d", i+1)
 			}
-		} else {
-			row = "  " + icon + " " + labelStyle.Render(label) + " " + provText
+			dead := a.Dead || !m.aliveCache[a.ID]
+			badge := providerBadge(a.Provider, dead)
+
+			labelStyle := lipgloss.NewStyle().Foreground(colorFg)
+			if dead {
+				labelStyle = labelStyle.Foreground(colorDim).Strikethrough(true)
+			}
+
+			content := icon + " " + labelStyle.Render(label) + "  " + badge
+			var row string
+			if i == m.sidebarCur {
+				marker := styleSelMarker.Render("▸")
+				selLabel := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(label)
+				if dead {
+					selLabel = lipgloss.NewStyle().Foreground(colorDim).Bold(true).Strikethrough(true).Render(label)
+				}
+				row = marker + " " + icon + " " + selLabel + "  " + badge
+			} else {
+				row = "  " + content
+			}
+			agentRows = append(agentRows, clipLine(row, w))
 		}
-		rows = append(rows, clipLine(row, w))
 	}
 
-	available := h - 1 // title row
+	// viewport windowing (reserve: 3 for agents header block + 4 for project footer)
+	headerBlock := 3 // HEADER, divider, blank
+	footerBlock := 5 // blank, PROJECT header, divider, path, branch
+	available := h - headerBlock - footerBlock
 	if available < 1 {
-		return clipLine(title, w)
+		available = h - headerBlock
+		if available < 1 {
+			available = 1
+		}
+		footerBlock = 0
 	}
 
-	start, end := 0, len(rows)
-	if len(rows) > available {
-		// slide window so sidebarCur is always in-view.
+	start, end := 0, len(agentRows)
+	if len(agentRows) > available {
 		start = m.sidebarCur - available/2
 		if start < 0 {
 			start = 0
 		}
-		if start+available > len(rows) {
-			start = len(rows) - available
+		if start+available > len(agentRows) {
+			start = len(agentRows) - available
 		}
 		end = start + available
 	}
 
-	out := []string{clipLine(title, w)}
-	out = append(out, rows[start:end]...)
+	var out []string
+	out = append(out, clipLine(header, w), clipLine(divider, w), "")
+	out = append(out, agentRows[start:end]...)
+
+	if footerBlock > 0 {
+		projectName := lipgloss.NewStyle().Foreground(colorFg).Render(truncName(p.Name, w-2))
+		projectPath := lipgloss.NewStyle().Foreground(colorDim).Render(truncName(displayPath(p.Path), w-2))
+		// pad agent area so project block hugs the bottom
+		pad := available - (end - start)
+		for k := 0; k < pad; k++ {
+			out = append(out, "")
+		}
+		out = append(out, "")
+		out = append(out, clipLine(styleSectionHeader.Render("PROJECT"), w))
+		out = append(out, clipLine(divider, w))
+		out = append(out, clipLine(projectName, w))
+		out = append(out, clipLine(projectPath, w))
+	}
+
 	return strings.Join(out, "\n")
 }
+
 
 func (m Model) statusIcon(id string) string {
 	if !m.aliveCache[id] {
@@ -1041,20 +1094,65 @@ const asciiMux = `
  ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝
 `
 
+// splashHint is a rendered key/description pair. We parse the "K  desc"
+// input strings into columns so the key column and description column
+// line up regardless of key width.
+type splashHint struct {
+	key, desc string
+}
+
+func parseSplashHints(raw []string) []splashHint {
+	out := make([]splashHint, 0, len(raw))
+	for _, r := range raw {
+		// split on first run of 2+ spaces; the inputs use "k   desc" format.
+		i := strings.Index(r, "  ")
+		if i == -1 {
+			out = append(out, splashHint{key: r})
+			continue
+		}
+		key := strings.TrimSpace(r[:i])
+		desc := strings.TrimSpace(r[i:])
+		out = append(out, splashHint{key: key, desc: desc})
+	}
+	return out
+}
+
 func renderSplash(w, h int, subtitle string, keys []string) string {
 	art := strings.TrimPrefix(asciiMux, "\n")
 	artStyled := lipgloss.NewStyle().Foreground(colorAccent).Render(art)
 	sub := lipgloss.NewStyle().Foreground(colorDim).Italic(true).Render(subtitle)
-	var keyLines []string
-	for _, k := range keys {
-		keyLines = append(keyLines, lipgloss.NewStyle().Foreground(colorDim).Render(k))
+
+	hints := parseSplashHints(keys)
+	// find max key width so every desc column starts at the same x.
+	keyW := 0
+	for _, hh := range hints {
+		if n := lipgloss.Width(hh.key); n > keyW {
+			keyW = n
+		}
 	}
+	keyStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Width(keyW)
+	descStyle := lipgloss.NewStyle().Foreground(colorDim)
+
+	rows := make([]string, 0, len(hints))
+	for _, hh := range hints {
+		if hh.desc == "" {
+			rows = append(rows, keyStyle.Render(hh.key))
+			continue
+		}
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render(hh.key),
+			"  ",
+			descStyle.Render(hh.desc),
+		))
+	}
+	keyBlock := lipgloss.JoinVertical(lipgloss.Left, rows...)
+
 	block := lipgloss.JoinVertical(lipgloss.Center,
 		artStyled,
 		"",
 		sub,
 		"",
-		strings.Join(keyLines, "\n"),
+		keyBlock,
 	)
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, block)
 }
@@ -1099,27 +1197,111 @@ func (m Model) renderHelp() string {
 }
 
 func (m Model) renderStatus() string {
-	left := fmt.Sprintf("[%s]", modeStr(m.mode))
+	// zones:
+	//   mode badge  (bold accent)
+	//   meta        (glyph + agent + state · path)  fg primary
+	//   keys right  (dim, tier-scaled)
+	// everything lives on the deep-bg so it reads as one horizontal band.
+	mode := styleStatusMode.Render(modeStr(m.mode))
+
+	meta := m.statusMeta()
 	long := "o open · n spawn · ent attach · j/k agent · [/] tab · 1-9 jump · w close · d kill · ? help · q quit"
 	short := "o open · n spawn · [/] tab · w close · ? help · q quit"
 	tiny := "? help · q quit"
-	right := long
-	if lipgloss.Width(left)+lipgloss.Width(right)+3 > m.w {
-		right = short
+	rightRaw := long
+	used := lipgloss.Width(mode) + lipgloss.Width(meta)
+	if used+lipgloss.Width(rightRaw)+3 > m.w {
+		rightRaw = short
 	}
-	if lipgloss.Width(left)+lipgloss.Width(right)+3 > m.w {
-		right = tiny
+	if used+lipgloss.Width(rightRaw)+3 > m.w {
+		rightRaw = tiny
 	}
-	gap := m.w - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	right := styleStatusKeys.Render(rightRaw)
+
+	// flash message eats the meta zone when set (ephemeral banner).
+	if m.statusMsg != "" {
+		meta = styleStatusMsg.Render(m.statusMsg)
+	}
+
+	gap := m.w - lipgloss.Width(mode) - lipgloss.Width(meta) - lipgloss.Width(right)
 	if gap < 1 {
 		gap = 1
 	}
-	line := left + strings.Repeat(" ", gap) + right
-	if m.statusMsg != "" {
-		prefix := m.statusMsg + "  ·  "
-		line = prefix + line
+	filler := styleStatus.Render(strings.Repeat(" ", gap))
+	line := lipgloss.JoinHorizontal(lipgloss.Top, mode, meta, filler, right)
+	return clipLine(line, m.w)
+}
+
+// statusMeta builds the middle zone of the status bar: provider glyph,
+// active agent, state, and project path. Degrades gracefully when nothing
+// is selected.
+func (m Model) statusMeta() string {
+	p := m.currentProject()
+	if p == nil {
+		return styleStatusMetaDim.Render(" mux ")
 	}
-	return clipLine(styleStatus.Render(line), m.w)
+	a := m.currentAgent()
+	if a == nil {
+		return styleStatusMetaDim.Render(" " + p.Name + " ")
+	}
+	dead := a.Dead || !m.aliveCache[a.ID]
+	stateStr := stateLabel(m.statusRec[a.ID].status, dead)
+	stateCol := stateColor(m.statusRec[a.ID].status, dead)
+	stateStyled := lipgloss.NewStyle().
+		Foreground(stateCol).
+		Background(colorBgDeep).
+		Render(stateStr)
+	sep := styleStatusMetaDim.Render(" · ")
+
+	// provider name on deep bg, brand color
+	provCol := colorDim
+	if spec, ok := session.Providers[a.Provider]; ok && spec.Color != "" {
+		provCol = lipgloss.Color(spec.Color)
+	}
+	if dead {
+		provCol = colorDim
+	}
+	provText := lipgloss.NewStyle().Foreground(provCol).Background(colorBgDeep).Render(a.Provider)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		styleStatusMetaDim.Render(" "),
+		styleStatusMeta.Render(a.Name),
+		sep,
+		provText,
+		sep,
+		stateStyled,
+		styleStatusMetaDim.Render(" "),
+	)
+}
+
+func stateLabel(s session.Status, dead bool) string {
+	if dead {
+		return "dead"
+	}
+	switch s {
+	case session.StatusActive:
+		return "active"
+	case session.StatusWaiting:
+		return "waiting"
+	case session.StatusIdle:
+		return "idle"
+	}
+	return "…"
+}
+
+func stateColor(s session.Status, dead bool) lipgloss.Color {
+	if dead {
+		return colorErr
+	}
+	switch s {
+	case session.StatusActive:
+		return colorOK
+	case session.StatusWaiting:
+		return colorWarn
+	case session.StatusIdle:
+		return colorDim
+	}
+	return colorDim
 }
 
 func (m Model) renderRepoPicker() string {
@@ -1178,43 +1360,48 @@ func (m Model) renderRepoPicker() string {
 func (m Model) renderProviderPicker() string {
 	names := session.ProviderNames()
 	title := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("spawn agent")
-	var lines []string
-	lines = append(lines, title, "")
+
+	rows := []string{title, ""}
 	for i, n := range names {
 		spec := session.Providers[n]
-		label := n
-		hint := ""
+		selected := i == m.providerCur
+
+		// name in brand color when available, dim otherwise. selected gets
+		// the marker + bold.
+		col := colorDim
+		if spec.Available && spec.Color != "" {
+			col = lipgloss.Color(spec.Color)
+		}
+		nameSt := lipgloss.NewStyle().Foreground(col)
+		if selected {
+			nameSt = nameSt.Bold(true)
+		}
+		name := nameSt.Render(spec.Name)
+
+		marker := "  "
+		if selected {
+			marker = styleSelMarker.Render("▸ ")
+		}
+		line := marker + name
 		if !spec.Available {
-			hint = lipgloss.NewStyle().Foreground(colorErr).Render(" · not installed")
+			line += lipgloss.NewStyle().Foreground(colorErr).Render("  · not installed")
 		}
-		text := label + hint
-		if i == m.providerCur {
-			if spec.Available {
-				lines = append(lines, styleListItemSel.Render("▸ "+label)+hint)
-			} else {
-				lines = append(lines, styleListItemSel.Render("▸ "+label)+hint)
-			}
-		} else {
-			if spec.Available {
-				lines = append(lines, "  "+text)
-			} else {
-				lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorDim).Render(label)+hint)
-			}
-		}
+		rows = append(rows, line)
 	}
-	// install hint for current selection
+
 	cur := session.Providers[names[m.providerCur]]
-	extra := ""
+	footer := styleStatus.Render("↓↑ select  enter spawn  esc cancel")
 	if !cur.Available && cur.Hint != "" {
-		extra = "\n" + lipgloss.NewStyle().Foreground(colorWarn).Render("install: "+cur.Hint)
+		footer = lipgloss.NewStyle().Foreground(colorWarn).Render("install: "+cur.Hint) + "\n" + footer
 	}
-	lines = append(lines, "", styleStatus.Render("↓↑ select  enter spawn  esc cancel")+extra)
+	rows = append(rows, "", footer)
+
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBorder).
+		BorderForeground(colorFaint).
 		Padding(1, 2).
 		Width(52).
-		Render(strings.Join(lines, "\n"))
+		Render(strings.Join(rows, "\n"))
 }
 
 func pickSessionID(p *state.Project, provider string) string {
