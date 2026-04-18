@@ -50,8 +50,6 @@ var (
 
 	styleDot = map[string]lipgloss.Style{
 		"running": lipgloss.NewStyle().Foreground(colorOK),
-		"idle":    lipgloss.NewStyle().Foreground(colorDim),
 		"dead":    lipgloss.NewStyle().Foreground(colorErr),
-		"wait":    lipgloss.NewStyle().Foreground(colorWarn),
 	}
 )

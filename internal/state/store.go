@@ -55,7 +55,8 @@ type State struct {
 
 type Store struct {
 	path string
-	mu   sync.Mutex
+	mu   sync.Mutex // guards data
+	ioMu sync.Mutex // serializes writes to disk so concurrent Saves can't race on rename
 	data State
 }
 
@@ -99,12 +100,17 @@ func (s *Store) load() error {
 }
 
 func (s *Store) Save() error {
+	// Marshal under state lock so we get a consistent snapshot, then release
+	// before fsync so concurrent mutations aren't blocked on disk IO.
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	b, err := json.MarshalIndent(s.data, "", "  ")
+	s.mu.Unlock()
 	if err != nil {
 		return err
 	}
+	// Serialize disk writes so two concurrent Saves can't interleave rename.
+	s.ioMu.Lock()
+	defer s.ioMu.Unlock()
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
@@ -112,10 +118,23 @@ func (s *Store) Save() error {
 	return os.Rename(tmp, s.path)
 }
 
+// Snapshot returns a deep-copied view of State safe to read outside the lock.
+// Callers who iterate Projects/Agents while the store mutates would otherwise
+// race on the shared backing array.
 func (s *Store) Snapshot() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.data
+	out := State{
+		OpenTabs:  append([]string(nil), s.data.OpenTabs...),
+		ActiveTab: s.data.ActiveTab,
+		Projects:  make([]Project, len(s.data.Projects)),
+	}
+	for i, p := range s.data.Projects {
+		cp := p
+		cp.Agents = append([]Agent(nil), p.Agents...)
+		out.Projects[i] = cp
+	}
+	return out
 }
 
 func (s *Store) UpsertProject(p Project) {
@@ -215,8 +234,10 @@ func (s *Store) RemoveAgent(projectPath, agentID string) {
 }
 
 // Reconcile marks agents dead when they are missing from the live set, and
-// clears Dead + updates LastSeen when present. Returns number newly marked dead.
-func (s *Store) Reconcile(live map[string]struct{}) int {
+// clears Dead + updates LastSeen when present. Returns number of Dead-flag
+// flips (in either direction) so callers can Save only when state actually
+// changed. LastSeen updates alone do not trigger a flip.
+func (s *Store) Reconcile(live map[string]bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := timeNow()
@@ -224,9 +245,10 @@ func (s *Store) Reconcile(live map[string]struct{}) int {
 	for i := range s.data.Projects {
 		for j := range s.data.Projects[i].Agents {
 			a := &s.data.Projects[i].Agents[j]
-			if _, ok := live[a.ID]; ok {
+			if live[a.ID] {
 				if a.Dead {
 					a.Dead = false
+					n++
 				}
 				a.LastSeen = now
 			} else if !a.Dead {

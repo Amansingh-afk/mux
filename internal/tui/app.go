@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -127,18 +128,18 @@ func (m Model) refreshPreview() tea.Cmd {
 	}
 }
 
-// captureAllForStatus captures every agent's pane content so we can classify
-// state for each. Unlike refreshPreview (current agent only) this touches all
-// sessions but fires asynchronously.
+// captureAllForStatus captures every (live) agent's pane content in parallel
+// so we can classify state for each. Skips dead agents (no session to
+// capture) and bounds concurrency to avoid spawning dozens of tmux processes
+// at once when the user has many agents open.
 func (m Model) captureAllForStatus() tea.Cmd {
 	snap := m.store.Snapshot()
-	type cap struct {
-		id  string
-		out string
-	}
 	var ids []string
 	for _, p := range snap.Projects {
 		for _, a := range p.Agents {
+			if a.Dead || !m.aliveCache[a.ID] {
+				continue
+			}
 			ids = append(ids, a.ID)
 		}
 	}
@@ -146,14 +147,29 @@ func (m Model) captureAllForStatus() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		// return a batch of previewMsg via a slice wrapper
-		caps := make([]previewMsg, 0, len(ids))
-		for _, id := range ids {
-			out, err := session.Capture(id, 40)
-			if err != nil {
-				continue
+		const maxParallel = 4
+		sem := make(chan struct{}, maxParallel)
+		var wg sync.WaitGroup
+		results := make([]previewMsg, len(ids))
+		for i, id := range ids {
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(i int, id string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				out, err := session.Capture(id, 40)
+				if err != nil {
+					return
+				}
+				results[i] = previewMsg{id: id, out: out}
+			}(i, id)
+		}
+		wg.Wait()
+		caps := make([]previewMsg, 0, len(results))
+		for _, r := range results {
+			if r.id != "" {
+				caps = append(caps, r)
 			}
-			caps = append(caps, previewMsg{id: id, out: out})
 		}
 		return statusBatchMsg(caps)
 	}
@@ -270,12 +286,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case aliveMsg:
 		m.aliveCache = msg
 		// reconcile state.Dead against live set so dead agents flip on
-		// spontaneously (e.g. tmux socket went away mid-session).
-		live := map[string]struct{}{}
-		for id := range msg {
-			live[id] = struct{}{}
+		// spontaneously (e.g. tmux socket went away mid-session). Save
+		// only when something actually flipped so we don't fsync every tick.
+		if n := m.store.Reconcile(msg); n > 0 {
+			_ = m.store.Save()
 		}
-		m.store.Reconcile(live)
 		return m, nil
 
 	case uuidCapturedMsg:
@@ -784,16 +799,16 @@ func (m Model) View() string {
 	view := lipgloss.JoinVertical(lipgloss.Left, tabs, row, status)
 
 	if m.mode == modeOpenProject {
-		return m.overlay(view, m.renderRepoPicker())
+		return m.overlay(m.renderRepoPicker())
 	}
 	if m.mode == modeSpawnAgent {
-		return m.overlay(view, m.renderProviderPicker())
+		return m.overlay(m.renderProviderPicker())
 	}
 	if m.mode == modeRenameAgent {
-		return m.overlay(view, m.renderRenameModal())
+		return m.overlay(m.renderRenameModal())
 	}
 	if m.mode == modeHelp {
-		return m.overlay(view, m.renderHelp())
+		return m.overlay(m.renderHelp())
 	}
 	return view
 }
@@ -811,7 +826,7 @@ func (m Model) renderRenameModal() string {
 		Render(inner)
 }
 
-func (m Model) overlay(base, content string) string {
+func (m Model) overlay(content string) string {
 	return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, content)
 }
 

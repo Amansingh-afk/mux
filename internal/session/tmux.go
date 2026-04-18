@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -64,6 +65,8 @@ func SpawnWithResume(id, dir string, p Provider, w, h int, r ResumeOpts) error {
 	if h < 10 {
 		h = 40
 	}
+	// fresh session, drop any stale resize-cache entry from a prior instance.
+	ForgetResize(id)
 	args := []string{
 		"new-session", "-d", "-s", id, "-c", dir,
 		"-x", fmt.Sprintf("%d", w), "-y", fmt.Sprintf("%d", h),
@@ -105,11 +108,38 @@ func containsString(ss []string, s string) bool {
 	return false
 }
 
+// resizeCache tracks last applied dims per session so Resize becomes a no-op
+// when nothing changed. Avoids a tmux fork per tick per agent.
+var (
+	resizeCacheMu sync.Mutex
+	resizeCache   = map[string][2]int{}
+)
+
 func Resize(id string, w, h int) error {
 	if w < 20 || h < 5 {
 		return nil
 	}
-	return tmux("resize-window", "-t", id, "-x", fmt.Sprintf("%d", w), "-y", fmt.Sprintf("%d", h)).Run()
+	resizeCacheMu.Lock()
+	last, ok := resizeCache[id]
+	resizeCacheMu.Unlock()
+	if ok && last[0] == w && last[1] == h {
+		return nil
+	}
+	if err := tmux("resize-window", "-t", id, "-x", fmt.Sprintf("%d", w), "-y", fmt.Sprintf("%d", h)).Run(); err != nil {
+		return err
+	}
+	resizeCacheMu.Lock()
+	resizeCache[id] = [2]int{w, h}
+	resizeCacheMu.Unlock()
+	return nil
+}
+
+// ForgetResize drops the cache entry for id. Call after Kill/respawn so the
+// next Resize actually runs tmux.
+func ForgetResize(id string) {
+	resizeCacheMu.Lock()
+	delete(resizeCache, id)
+	resizeCacheMu.Unlock()
 }
 
 func SetSizeLatest(id string) {
@@ -117,6 +147,7 @@ func SetSizeLatest(id string) {
 }
 
 func Kill(id string) error {
+	ForgetResize(id)
 	return tmux("kill-session", "-t", id).Run()
 }
 

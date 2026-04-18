@@ -24,12 +24,10 @@ func main() {
 	}
 	aliveSeed := map[string]bool{}
 	if ids, err := session.List(); err == nil {
-		live := make(map[string]struct{}, len(ids))
 		for _, id := range ids {
-			live[id] = struct{}{}
 			aliveSeed[id] = true
 		}
-		store.Reconcile(live)
+		store.Reconcile(aliveSeed)
 		_ = store.Save()
 	}
 	p := tea.NewProgram(tui.New(store, aliveSeed), tea.WithAltScreen(), tea.WithMouseCellMotion())
