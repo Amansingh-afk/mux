@@ -75,7 +75,11 @@ func SessionDir(provider, cwd string) string {
 }
 
 // spawnLocks serializes concurrent Spawns that land in the same provider
-// session dir, so mtime-based uuid capture stays reliable.
+// session dir, so mtime-based uuid capture stays reliable. Capped at
+// spawnLockCap entries; when exceeded, idle locks (TryLock succeeds) are
+// evicted opportunistically so long-running sessions don't accumulate.
+const spawnLockCap = 256
+
 var (
 	spawnLockMu sync.Mutex
 	spawnLocks  = map[string]*sync.Mutex{}
@@ -84,11 +88,22 @@ var (
 func dirLock(key string) *sync.Mutex {
 	spawnLockMu.Lock()
 	defer spawnLockMu.Unlock()
-	m, ok := spawnLocks[key]
-	if !ok {
-		m = &sync.Mutex{}
-		spawnLocks[key] = m
+	if m, ok := spawnLocks[key]; ok {
+		return m
 	}
+	if len(spawnLocks) >= spawnLockCap {
+		for k, l := range spawnLocks {
+			if l.TryLock() {
+				l.Unlock()
+				delete(spawnLocks, k)
+				if len(spawnLocks) < spawnLockCap {
+					break
+				}
+			}
+		}
+	}
+	m := &sync.Mutex{}
+	spawnLocks[key] = m
 	return m
 }
 

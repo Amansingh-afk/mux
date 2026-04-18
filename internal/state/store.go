@@ -115,7 +115,14 @@ func (s *Store) Save() error {
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if err := os.Rename(tmp, s.path); err != nil {
+		// best-effort: don't leave a stale .tmp around if rename failed (disk
+		// full, perms, etc). ignore remove error — the write error is the
+		// one worth returning.
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // Snapshot returns a deep-copied view of State safe to read outside the lock.
@@ -137,14 +144,27 @@ func (s *Store) Snapshot() State {
 	return out
 }
 
+// UpsertProject inserts or updates a Project by Path. Preserves existing
+// Agents when the incoming Project has no Agents of its own — the common
+// open-existing-repo path sends only metadata and must not wipe the sidebar.
 func (s *Store) UpsertProject(p Project) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.data.Projects {
-		if s.data.Projects[i].Path == p.Path {
-			s.data.Projects[i] = p
-			return
+		if s.data.Projects[i].Path != p.Path {
+			continue
 		}
+		existing := s.data.Projects[i]
+		existing.Name = p.Name
+		if p.LastUse != 0 {
+			existing.LastUse = p.LastUse
+		}
+		existing.Pinned = p.Pinned
+		if len(p.Agents) > 0 {
+			existing.Agents = p.Agents
+		}
+		s.data.Projects[i] = existing
+		return
 	}
 	s.data.Projects = append(s.data.Projects, p)
 }

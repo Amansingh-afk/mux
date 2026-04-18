@@ -2,6 +2,7 @@ package session
 
 import (
 	"hash/fnv"
+	"regexp"
 	"strings"
 )
 
@@ -87,22 +88,19 @@ func looksWaiting(content string) bool {
 	return false
 }
 
+// ansiRe matches the common escape families we see in agent output:
+//   CSI  ESC [ params final-byte
+//   OSC  ESC ] ... BEL or ESC \
+//   SS2/SS3 + simple 2-char sequences (ESC + alnum)
+// narrower than a full vt100 parser, but covers SGR colors, cursor moves, and
+// the title/notify sequences claude/codex emit.
+var ansiRe = regexp.MustCompile(
+	`\x1b\[[0-?]*[ -/]*[@-~]` +
+		`|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)` +
+		`|\x1b[@-Z\\-_]`,
+)
+
 // stripANSI removes ANSI escape sequences for prompt matching.
 func stripANSI(s string) string {
-	var b strings.Builder
-	inEsc := false
-	for _, r := range s {
-		if inEsc {
-			if (r >= '@' && r <= '~') || r == 'm' {
-				inEsc = false
-			}
-			continue
-		}
-		if r == 0x1b {
-			inEsc = true
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
+	return ansiRe.ReplaceAllString(s, "")
 }

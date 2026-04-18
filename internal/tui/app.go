@@ -134,10 +134,16 @@ func (m Model) refreshPreview() tea.Cmd {
 // at once when the user has many agents open.
 func (m Model) captureAllForStatus() tea.Cmd {
 	snap := m.store.Snapshot()
+	// copy aliveCache into a local so the returned closure is free of any
+	// reference into Model state that Update may mutate later.
+	alive := make(map[string]bool, len(m.aliveCache))
+	for k, v := range m.aliveCache {
+		alive[k] = v
+	}
 	var ids []string
 	for _, p := range snap.Projects {
 		for _, a := range p.Agents {
-			if a.Dead || !m.aliveCache[a.ID] {
+			if a.Dead || !alive[a.ID] {
 				continue
 			}
 			ids = append(ids, a.ID)
@@ -786,7 +792,12 @@ func (m Model) View() string {
 	if m.w < 80 {
 		sidebarW = 22
 	}
-	sidebar := styleSidebar.Width(sidebarW).Height(bodyH).Render(m.renderSidebar(bodyH))
+	// sidebar inner area = sidebarW minus border (1) + padding (2)
+	sidebarInnerW := sidebarW - 3
+	if sidebarInnerW < 8 {
+		sidebarInnerW = 8
+	}
+	sidebar := styleSidebar.Width(sidebarW).Height(bodyH).Render(m.renderSidebar(sidebarInnerW, bodyH))
 	actualSW := lipgloss.Width(sidebar)
 	bodyTotalW := m.w - actualSW
 	if bodyTotalW < 10 {
@@ -886,16 +897,19 @@ func truncName(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
-func (m Model) renderSidebar(h int) string {
+func (m Model) renderSidebar(w, h int) string {
 	p := m.currentProject()
 	if p == nil {
 		return styleStatus.Render("no project")
 	}
 	title := lipgloss.NewStyle().Bold(true).Render("agents")
 	if len(p.Agents) == 0 {
-		return title + "\n" + styleStatus.Render("press n to spawn")
+		return clipLine(title, w) + "\n" + clipLine(styleStatus.Render("press n to spawn"), w)
 	}
-	lines := []string{title}
+
+	// build all rows first, then viewport-window them so cursor stays visible
+	// and total rows fit in h. reserve 1 row for title, 1 for overflow hint.
+	rows := make([]string, 0, len(p.Agents))
 	for i, a := range p.Agents {
 		icon := m.statusIcon(a.ID)
 		label := a.Name
@@ -923,9 +937,30 @@ func (m Model) renderSidebar(h int) string {
 		} else {
 			row = "  " + icon + " " + labelStyle.Render(label) + " " + provText
 		}
-		lines = append(lines, row)
+		rows = append(rows, clipLine(row, w))
 	}
-	return strings.Join(lines, "\n")
+
+	available := h - 1 // title row
+	if available < 1 {
+		return clipLine(title, w)
+	}
+
+	start, end := 0, len(rows)
+	if len(rows) > available {
+		// slide window so sidebarCur is always in-view.
+		start = m.sidebarCur - available/2
+		if start < 0 {
+			start = 0
+		}
+		if start+available > len(rows) {
+			start = len(rows) - available
+		}
+		end = start + available
+	}
+
+	out := []string{clipLine(title, w)}
+	out = append(out, rows[start:end]...)
+	return strings.Join(out, "\n")
 }
 
 func (m Model) statusIcon(id string) string {
@@ -964,8 +999,8 @@ func (m Model) renderBody(w, h int) string {
 	}
 	dead := a.Dead || !m.aliveCache[a.ID]
 	if dead {
-		banner := lipgloss.NewStyle().Foreground(colorWarn).Bold(true).
-			Render("● agent dead — press enter to resume")
+		banner := clipLine(lipgloss.NewStyle().Foreground(colorWarn).Bold(true).
+			Render("● agent dead — press enter to resume"), w)
 		body := a.LastPreview
 		if body == "" {
 			body = lipgloss.NewStyle().Foreground(colorDim).Italic(true).
@@ -977,6 +1012,9 @@ func (m Model) renderBody(w, h int) string {
 		if avail > 0 && len(lines) > avail {
 			lines = lines[len(lines)-avail:]
 		}
+		for i, l := range lines {
+			lines[i] = clipLine(l, w)
+		}
 		return banner + "\n\n" + strings.Join(lines, "\n")
 	}
 	out, ok := m.previewCache[a.ID]
@@ -987,6 +1025,9 @@ func (m Model) renderBody(w, h int) string {
 	lines := strings.Split(out, "\n")
 	if len(lines) > h {
 		lines = lines[len(lines)-h:]
+	}
+	for i, l := range lines {
+		lines[i] = clipLine(l, w)
 	}
 	return strings.Join(lines, "\n")
 }

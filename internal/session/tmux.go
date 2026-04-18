@@ -1,11 +1,13 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const socketName = "mux"
@@ -175,9 +177,20 @@ func List() ([]string, error) {
 	return ids, nil
 }
 
+// Capture returns the current visible pane content with ANSI preserved.
+// `lines` is the caller's hint for how many rows they'll render; tmux returns
+// the whole visible pane regardless, we trim at the caller. Scrollback is
+// deliberately excluded — TUI agents (claude, codex) push transcript into
+// scrollback on detach and re-render on attach, which would double-print
+// in the body preview if we captured it.
+//
+// Bounded by a 1s timeout so a dead tmux socket can't wedge the status tick.
 func Capture(id string, lines int) (string, error) {
-	start := fmt.Sprintf("-%d", lines)
-	out, err := tmux("capture-pane", "-p", "-t", id, "-S", start, "-e").Output()
+	_ = lines
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "-L", socketName, "capture-pane", "-p", "-t", id, "-e")
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
