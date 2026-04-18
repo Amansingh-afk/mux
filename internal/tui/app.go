@@ -535,7 +535,33 @@ func (m Model) handleSpawnAgent(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		_ = m.store.Save()
 		m.mode = modeNormal
 		m.statusMsg = "spawned " + name
-		return m, tea.Batch(m.refreshPreview(), captureUUIDCmd(provider, projectPath, id, before))
+		// move cursor to the just-spawned agent so auto-attach targets it.
+		snap := m.store.Snapshot()
+		for pi := range snap.Projects {
+			if snap.Projects[pi].Path != projectPath {
+				continue
+			}
+			for ai, a := range snap.Projects[pi].Agents {
+				if a.ID == id {
+					m.sidebarCur = ai
+					break
+				}
+			}
+		}
+		// auto-attach: spawn→attach is the expected single action. user can
+		// C-b d back to the tui when they want to detach.
+		session.SetSizeLatest(id)
+		cmd := session.AttachCmd(id)
+		attach := tea.ExecProcess(cmd, func(err error) tea.Msg {
+			if err != nil {
+				return previewMsg{id: id, out: "attach err: " + err.Error()}
+			}
+			return tickMsg(time.Now())
+		})
+		return m, tea.Batch(
+			captureUUIDCmd(provider, projectPath, id, before),
+			tea.Sequence(attach, tea.EnterAltScreen, tea.ClearScreen),
+		)
 	}
 	return m, nil
 }
