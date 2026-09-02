@@ -100,14 +100,17 @@ func (m Model) classifyAndNotify(c captureRec) {
 	prev := m.statusRec[id]
 	s, h, t := session.Classify(out, prev.hash, prev.status, prev.stableTicks)
 	paneChanged := h != prev.hash
+	reason := ""
 	if n := c.native; n != nil {
 		switch {
 		case time.Since(n.At) <= nativeFreshWindow:
 			s = n.Status
+			reason = n.Reason
 		case (n.Status == session.StatusWaiting || n.Status == session.StatusIdle) && paneChanged:
 			s = session.StatusActive
 		default:
 			s = n.Status
+			reason = n.Reason
 		}
 	}
 	rec := agentStatusRec{status: s, hash: h, stableTicks: t, lastNotify: prev.lastNotify}
@@ -115,7 +118,7 @@ func (m Model) classifyAndNotify(c captureRec) {
 		if a, p := m.agentByID(id); a != nil {
 			ctx := hooks.Context{
 				Agent:  &hooks.AgentCtx{ID: a.ID, Name: a.Name, Provider: a.Provider},
-				Status: &hooks.StatusCtx{Prev: string(prev.status), Now: string(s)},
+				Status: &hooks.StatusCtx{Prev: string(prev.status), Now: string(s), Reason: reason},
 			}
 			if p != nil {
 				ctx.Project = &hooks.ProjectCtx{Name: p.Name, Path: p.Path}

@@ -30,6 +30,10 @@ type ProjectCtx struct {
 type StatusCtx struct {
 	Prev string `json:"prev"`
 	Now  string `json:"now"`
+	// Reason says why the status changed when the provider told us:
+	// "permission" (blocked on approval), "done" (turn finished), "ended"
+	// (session exited). "" when the transition came from pane heuristics.
+	Reason string `json:"reason,omitempty"`
 }
 
 type Context struct {
@@ -108,6 +112,7 @@ func run(ctx context.Context, path string, c Context) (string, error) {
 		env = append(env,
 			"MUX_STATUS_PREV="+c.Status.Prev,
 			"MUX_STATUS_NOW="+c.Status.Now,
+			"MUX_REASON="+c.Status.Reason,
 		)
 	}
 	cmd.Env = env

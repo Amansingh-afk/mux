@@ -53,7 +53,7 @@ func TestSpoolEventRoundtrip(t *testing.T) {
 	}
 
 	before := time.Now().Add(-time.Second)
-	if err := WriteSpoolEvent(id, StatusActive); err != nil {
+	if err := WriteSpoolEvent(id, StatusActive, ""); err != nil {
 		t.Fatal(err)
 	}
 	sig, ok := readSpool(id)
@@ -68,7 +68,7 @@ func TestSpoolEventRoundtrip(t *testing.T) {
 	}
 
 	// overwrite semantics: second write replaces, never appends.
-	if err := WriteSpoolEvent(id, StatusWaiting); err != nil {
+	if err := WriteSpoolEvent(id, StatusWaiting, ""); err != nil {
 		t.Fatal(err)
 	}
 	sig, ok = readSpool(id)
@@ -190,7 +190,7 @@ func TestNativeProbeSpoolVsMtimePrecedence(t *testing.T) {
 	path := filepath.Join(dir, testUUID+".jsonl")
 
 	// spool only
-	if err := WriteSpoolEvent(ref.ID, StatusWaiting); err != nil {
+	if err := WriteSpoolEvent(ref.ID, StatusWaiting, ""); err != nil {
 		t.Fatal(err)
 	}
 	sig, ok := NativeProbe(ref)
@@ -215,7 +215,7 @@ func TestNativeProbeSpoolVsMtimePrecedence(t *testing.T) {
 	if err := os.Chtimes(path, past, past); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteSpoolEvent(ref.ID, StatusIdle); err != nil {
+	if err := WriteSpoolEvent(ref.ID, StatusIdle, ""); err != nil {
 		t.Fatal(err)
 	}
 	sig, ok = NativeProbe(ref)
@@ -234,7 +234,7 @@ func TestNativeProbeGates(t *testing.T) {
 	dir := t.TempDir()
 	registerNativeProvider(t, "faketest-gate", dir)
 	gated := AgentRef{ID: "mux_g_1", Provider: "faketest-gate", Dir: "/w", SessionUUID: testUUID}
-	if err := WriteSpoolEvent(gated.ID, StatusActive); err != nil {
+	if err := WriteSpoolEvent(gated.ID, StatusActive, ""); err != nil {
 		t.Fatal(err)
 	}
 	SetNativeStatus(false)
@@ -247,7 +247,7 @@ func TestNativeProbeGates(t *testing.T) {
 func TestClearSpool(t *testing.T) {
 	setSpoolDir(t)
 	const id = "mux_clear_1"
-	if err := WriteSpoolEvent(id, StatusActive); err != nil {
+	if err := WriteSpoolEvent(id, StatusActive, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := WriteSpoolSessionID(id, testUUID); err != nil {
@@ -264,24 +264,25 @@ func TestClearSpool(t *testing.T) {
 
 func TestMapClaudeHookEvent(t *testing.T) {
 	tests := []struct {
-		event string
-		want  Status
-		ok    bool
+		event  string
+		want   Status
+		reason string
+		ok     bool
 	}{
-		{"UserPromptSubmit", StatusActive, true},
-		{"Stop", StatusWaiting, true},
-		{"SubagentStop", StatusWaiting, true},
-		{"Notification", StatusWaiting, true},
-		{"SessionEnd", StatusIdle, true},
-		{"SessionStart", StatusUnknown, false},
-		{"PreToolUse", StatusUnknown, false},
-		{"", StatusUnknown, false},
+		{"UserPromptSubmit", StatusActive, "", true},
+		{"Stop", StatusWaiting, ReasonDone, true},
+		{"SubagentStop", StatusWaiting, ReasonDone, true},
+		{"Notification", StatusWaiting, ReasonPermission, true},
+		{"SessionEnd", StatusIdle, ReasonEnded, true},
+		{"SessionStart", StatusUnknown, "", false},
+		{"PreToolUse", StatusUnknown, "", false},
+		{"", StatusUnknown, "", false},
 	}
 	for _, tc := range tests {
-		got, ok := MapClaudeHookEvent(tc.event)
-		if got != tc.want || ok != tc.ok {
-			t.Errorf("MapClaudeHookEvent(%q) = (%q, %v), want (%q, %v)",
-				tc.event, got, ok, tc.want, tc.ok)
+		got, reason, ok := MapClaudeHookEvent(tc.event)
+		if got != tc.want || reason != tc.reason || ok != tc.ok {
+			t.Errorf("MapClaudeHookEvent(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tc.event, got, reason, ok, tc.want, tc.reason, tc.ok)
 		}
 	}
 }

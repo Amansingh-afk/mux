@@ -29,7 +29,18 @@ import (
 type NativeSignal struct {
 	Status Status
 	At     time.Time
+	// Reason says why the provider reported this status, when known:
+	// "permission" (agent blocked on an approval prompt), "done" (turn
+	// finished), "ended" (session exited). "" for heuristic/mtime signals.
+	Reason string
 }
+
+// Reason values carried by native signals into the on_waiting hook.
+const (
+	ReasonPermission = "permission"
+	ReasonDone       = "done"
+	ReasonEnded      = "ended"
+)
 
 // AgentRef carries the identity NativeProbe needs to locate an agent's spool
 // file and transcript.
@@ -93,17 +104,18 @@ func SidFilePath(agentID string) string {
 	return filepath.Join(eventsDir(), sanitize(agentID)+".sid")
 }
 
-// spoolEvent is the on-disk JSON shape: {"status":"...","ts":<unix>}.
+// spoolEvent is the on-disk JSON shape: {"status":"...","reason":"...","ts":<unix>}.
 type spoolEvent struct {
 	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
 	TS     int64  `json:"ts"`
 }
 
 // WriteSpoolEvent records the agent's latest native status. Overwrite
 // semantics — never append. Atomic (temp + rename) so a concurrent reader
 // never sees a torn line.
-func WriteSpoolEvent(agentID string, st Status) error {
-	data, err := json.Marshal(spoolEvent{Status: string(st), TS: time.Now().Unix()})
+func WriteSpoolEvent(agentID string, st Status, reason string) error {
+	data, err := json.Marshal(spoolEvent{Status: string(st), Reason: reason, TS: time.Now().Unix()})
 	if err != nil {
 		return err
 	}
@@ -178,7 +190,7 @@ func readSpool(agentID string) (NativeSignal, bool) {
 	if ev.TS <= 0 {
 		return NativeSignal{}, false
 	}
-	return NativeSignal{Status: Status(ev.Status), At: time.Unix(ev.TS, 0)}, true
+	return NativeSignal{Status: Status(ev.Status), At: time.Unix(ev.TS, 0), Reason: ev.Reason}, true
 }
 
 // transcriptFreshWindow: a session jsonl touched within this window means the
@@ -357,18 +369,23 @@ func injectNative(agentID string, p Provider) (Provider, []string) {
 }
 
 // MapClaudeHookEvent maps a claude settings hook event name to the mux
-// status it implies. ok=false for events that carry no status transition
-// (SessionStart, unknown events).
-func MapClaudeHookEvent(name string) (Status, bool) {
+// status and reason it implies. ok=false for events that carry no status
+// transition (SessionStart, unknown events). The reason distinguishes the
+// two very different kinds of "waiting": blocked on a permission prompt
+// (Notification) vs turn finished (Stop) — downstream notification hooks
+// want to treat those differently.
+func MapClaudeHookEvent(name string) (Status, string, bool) {
 	switch name {
 	case "UserPromptSubmit":
-		return StatusActive, true
-	case "Stop", "SubagentStop", "Notification":
-		return StatusWaiting, true
+		return StatusActive, "", true
+	case "Stop", "SubagentStop":
+		return StatusWaiting, ReasonDone, true
+	case "Notification":
+		return StatusWaiting, ReasonPermission, true
 	case "SessionEnd":
-		return StatusIdle, true
+		return StatusIdle, ReasonEnded, true
 	}
-	return StatusUnknown, false
+	return StatusUnknown, "", false
 }
 
 // CaptureUUIDForAgent is CaptureUUID plus the deterministic fast path: the

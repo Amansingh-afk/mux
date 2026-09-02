@@ -163,6 +163,8 @@ MUX_PROJECT_NAME       project display name
 MUX_PROJECT_PATH       absolute repo path
 MUX_STATUS_PREV        previous status (on_waiting)
 MUX_STATUS_NOW         new status (on_waiting)
+MUX_REASON             why, when the provider said: permission | done | ended
+                       (empty when the transition came from pane heuristics)
 ```
 
 ### example — notification
@@ -171,10 +173,19 @@ MUX_STATUS_NOW         new status (on_waiting)
 
 ```bash
 #!/bin/bash
-notify-send -a mux -u normal -i utilities-terminal \
-    "mux · $MUX_AGENT_NAME waiting" \
+urgency=normal
+msg="finished — review when ready"
+if [ "$MUX_REASON" = "permission" ]; then
+    urgency=critical
+    msg="BLOCKED — wants permission"
+fi
+notify-send -a mux -u "$urgency" -i utilities-terminal \
+    "mux · $MUX_AGENT_NAME $msg" \
     "$MUX_AGENT_PROVIDER in $MUX_PROJECT_NAME"
 ```
+
+a blocked agent (waiting for your approval) and a finished agent are very
+different interruptions — `MUX_REASON` lets the hook treat them differently.
 
 needs a notification daemon running (mako / dunst / swaync / gnome-shell). `chmod +x` the file.
 
