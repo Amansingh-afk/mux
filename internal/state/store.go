@@ -18,7 +18,6 @@ type Agent struct {
 	Dir         string `json:"dir,omitempty"`
 	SessionUUID string `json:"session_uuid,omitempty"`
 	LastSeen    int64  `json:"last_seen,omitempty"`
-	LastPreview string `json:"last_preview,omitempty"`
 	Dead        bool   `json:"dead,omitempty"`
 }
 
@@ -40,17 +39,18 @@ func (s *Store) RenameAgent(projectPath, agentID, name string) {
 }
 
 type Project struct {
-	Name    string  `json:"name"`
-	Path    string  `json:"path"`
-	Agents  []Agent `json:"agents"`
-	Pinned  bool    `json:"pinned"`
-	LastUse int64   `json:"last_use"`
+	Name        string  `json:"name"`
+	Path        string  `json:"path"`
+	Agents      []Agent `json:"agents"`
+	Pinned      bool    `json:"pinned"`
+	LastUse     int64   `json:"last_use"`
+	LastAgentID string  `json:"last_agent_id,omitempty"`
 }
 
 type State struct {
-	Projects []Project `json:"projects"`
-	OpenTabs []string  `json:"open_tabs"` // project paths in tab order
-	ActiveTab string   `json:"active_tab"`
+	Projects  []Project `json:"projects"`
+	OpenTabs  []string  `json:"open_tabs"` // project paths in tab order
+	ActiveTab string    `json:"active_tab"`
 }
 
 type Store struct {
@@ -186,6 +186,13 @@ func (s *Store) RemoveProject(path string) {
 		}
 	}
 	s.data.OpenTabs = tabs
+	if s.data.ActiveTab == path {
+		if len(tabs) > 0 {
+			s.data.ActiveTab = tabs[len(tabs)-1]
+		} else {
+			s.data.ActiveTab = ""
+		}
+	}
 }
 
 func (s *Store) OpenTab(path string) {
@@ -298,6 +305,20 @@ func (s *Store) MarkAgentDead(projectPath, agentID string) {
 	}
 }
 
+// SetLastAgent records which agent was most recently focused in the given
+// project so tab switches can restore the prior selection instead of jumping
+// to index 0.
+func (s *Store) SetLastAgent(projectPath, agentID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.data.Projects {
+		if s.data.Projects[i].Path == projectPath {
+			s.data.Projects[i].LastAgentID = agentID
+			return
+		}
+	}
+}
+
 // SetAgentUUID records the provider's native session UUID for a given agent.
 func (s *Store) SetAgentUUID(projectPath, agentID, uuid string) {
 	s.mu.Lock()
@@ -309,24 +330,6 @@ func (s *Store) SetAgentUUID(projectPath, agentID, uuid string) {
 		for j := range s.data.Projects[i].Agents {
 			if s.data.Projects[i].Agents[j].ID == agentID {
 				s.data.Projects[i].Agents[j].SessionUUID = uuid
-				return
-			}
-		}
-	}
-}
-
-// SetAgentPreview stashes the last capture of a pane so dead agents still show
-// something useful in the body before resume.
-func (s *Store) SetAgentPreview(projectPath, agentID, preview string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.data.Projects {
-		if s.data.Projects[i].Path != projectPath {
-			continue
-		}
-		for j := range s.data.Projects[i].Agents {
-			if s.data.Projects[i].Agents[j].ID == agentID {
-				s.data.Projects[i].Agents[j].LastPreview = preview
 				return
 			}
 		}

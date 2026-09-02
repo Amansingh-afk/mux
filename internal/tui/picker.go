@@ -8,9 +8,19 @@ import (
 
 	"github.com/sahilm/fuzzy"
 
-	"github.com/ashmit/mux/internal/discover"
-	"github.com/ashmit/mux/internal/state"
+	"github.com/Amansingh-afk/mux/internal/discover"
+	"github.com/Amansingh-afk/mux/internal/state"
 )
+
+// extraDiscoveryRoots are user-configured repo-scan roots ([general]
+// discovery_roots), appended to the built-in defaults. Set once at startup.
+var extraDiscoveryRoots []string
+
+// SetDiscoveryRoots installs the configured extra repo-scan roots. Call
+// before the TUI starts.
+func SetDiscoveryRoots(roots []string) {
+	extraDiscoveryRoots = roots
+}
 
 type pickerItem struct {
 	name  string // display label
@@ -53,13 +63,18 @@ func buildItems(saved []state.Project) []pickerItem {
 		items = append(items, pickerItem{name: s.Name, path: s.Path, tag: "saved"})
 	}
 
-	// discovered repos
-	for _, r := range discover.Repos(discover.DefaultRoots(), 4) {
+	// discovered repos + plain folders
+	roots := append(discover.DefaultRoots(), extraDiscoveryRoots...)
+	for _, r := range discover.Repos(roots, 4) {
 		if _, dup := seen[r.Path]; dup {
 			continue
 		}
 		seen[r.Path] = struct{}{}
-		items = append(items, pickerItem{name: r.Name, path: r.Path, tag: "repo"})
+		tag := r.Kind
+		if tag == "" {
+			tag = "repo"
+		}
+		items = append(items, pickerItem{name: r.Name, path: r.Path, tag: tag})
 	}
 	return items
 }

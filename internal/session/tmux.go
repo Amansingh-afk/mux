@@ -3,7 +3,9 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,8 +22,37 @@ type Agent struct {
 	PID      int
 }
 
+// OuterSocket parses $TMUX (format: "<socket-path>,<server-pid>,<session-id>")
+// to discover the tmux daemon mux is running inside. Returns "" if not in tmux,
+// in which case the legacy `-L mux` private socket is used.
+func OuterSocket() string {
+	t := os.Getenv("TMUX")
+	if t == "" {
+		return ""
+	}
+	parts := strings.SplitN(t, ",", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		return ""
+	}
+	return parts[0]
+}
+
+// OuterPane returns the tmux pane id mux itself is running in (e.g. "%12"),
+// or "" if not running inside tmux.
+func OuterPane() string {
+	return os.Getenv("TMUX_PANE")
+}
+
+// tmux builds an exec.Cmd against the right socket. When mux runs inside an
+// outer tmux session, all commands target that daemon (-S <path>). Otherwise
+// the legacy private "-L mux" socket is used, preserving non-tmux startup.
 func tmux(args ...string) *exec.Cmd {
-	base := []string{"-L", socketName}
+	var base []string
+	if sock := OuterSocket(); sock != "" {
+		base = []string{"-S", sock}
+	} else {
+		base = []string{"-L", socketName}
+	}
 	return exec.Command("tmux", append(base, args...)...)
 }
 
@@ -73,32 +104,55 @@ func SpawnWithResume(id, dir string, p Provider, w, h int, r ResumeOpts) error {
 		"new-session", "-d", "-s", id, "-c", dir,
 		"-x", fmt.Sprintf("%d", w), "-y", fmt.Sprintf("%d", h),
 	}
-	if p.Cmd != "" {
-		args = append(args, p.Cmd)
-		if r.Enabled && len(p.ResumeFlag) > 0 {
-			args = append(args, p.ResumeFlag...)
-			if r.UUID != "" && p.SessionArg != "" {
-				// SessionArg may overlap with ResumeFlag (e.g. claude's
-				// "--resume" is both); in that case append the uuid as the
-				// value rather than re-emitting the flag.
-				if containsString(p.ResumeFlag, p.SessionArg) {
-					args = append(args, r.UUID)
-				} else {
-					args = append(args, p.SessionArg, r.UUID)
-				}
-			}
-		} else {
-			args = append(args, p.Args...)
-		}
+	// native-status injection: per-spawn Provider copy with hook/notify
+	// flags plus MUX_AGENT_ID in the session env (tmux >= 3.2 `-e`). When
+	// native status is off this is a no-op and the spawn is byte-identical.
+	p, envArgs := injectNative(id, p)
+	if len(envArgs) > 0 {
+		args = append(args, envArgs...)
+		// drop stale spool state from a prior incarnation of this id so the
+		// new session starts with a clean native-signal slate.
+		ClearSpool(id)
 	}
+	args = append(args, buildSpawnArgv(p, r)...)
 	out, err := tmux(args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux spawn: %w: %s", err, out)
 	}
-	// window-size=latest: when a client attaches, session resizes to that
-	// client; when no client, size stays at last value (we control via Resize).
-	_ = tmux("set-option", "-t", id, "window-size", "latest").Run()
+	// window-size=manual: tmux never auto-resizes on attach. mux owns dims
+	// via Resize / resizeAllSessions. Avoids the spurious SIGWINCH on every
+	// SwitchClient that causes a visible re-render flicker.
+	_ = tmux("set-option", "-t", id, "window-size", "manual").Run()
 	return nil
+}
+
+// buildSpawnArgv assembles the command argv launched inside the tmux
+// session: Cmd, PreArgs, [resume: ResumeFlag, (uuid via SessionArg)], Args.
+// PreArgs are emitted in both fresh and resume spawns; Args always trail
+// (previously the resume branch dropped them). Returns nil for the shell
+// provider (empty Cmd) so tmux falls back to the default shell.
+func buildSpawnArgv(p Provider, r ResumeOpts) []string {
+	if p.Cmd == "" {
+		return nil
+	}
+	argv := make([]string, 0, 1+len(p.PreArgs)+len(p.ResumeFlag)+2+len(p.Args))
+	argv = append(argv, p.Cmd)
+	argv = append(argv, p.PreArgs...)
+	if r.Enabled && len(p.ResumeFlag) > 0 {
+		argv = append(argv, p.ResumeFlag...)
+		if r.UUID != "" && p.SessionArg != "" {
+			// SessionArg may overlap with ResumeFlag (e.g. claude's
+			// "--resume" is both); in that case append the uuid as the
+			// value rather than re-emitting the flag.
+			if containsString(p.ResumeFlag, p.SessionArg) {
+				argv = append(argv, r.UUID)
+			} else {
+				argv = append(argv, p.SessionArg, r.UUID)
+			}
+		}
+	}
+	argv = append(argv, p.Args...)
+	return argv
 }
 
 func containsString(ss []string, s string) bool {
@@ -144,8 +198,26 @@ func ForgetResize(id string) {
 	resizeCacheMu.Unlock()
 }
 
-func SetSizeLatest(id string) {
-	_ = tmux("set-option", "-t", id, "window-size", "latest").Run()
+// SetSizeManual locks a session's window-size to manual so it never
+// auto-resizes on client attach. Called after respawn/resume because
+// tmux can reset the option in some flows. Idempotent — Spawn also sets it.
+func SetSizeManual(id string) {
+	_ = tmux("set-option", "-t", id, "window-size", "manual").Run()
+}
+
+// NudgeResize forces a SIGWINCH on the agent process by transiently resizing
+// the session to (w-1, h) then back to (w, h). Plain Resize is a no-op when
+// cached dims already match, which leaves TUIs (claude/codex) frozen on
+// their initial loading buffer. Bounce guarantees a real resize event.
+func NudgeResize(id string, w, h int) {
+	if w < 21 || h < 6 {
+		return
+	}
+	_ = tmux("resize-window", "-t", id, "-x", fmt.Sprintf("%d", w-1), "-y", fmt.Sprintf("%d", h)).Run()
+	_ = tmux("resize-window", "-t", id, "-x", fmt.Sprintf("%d", w), "-y", fmt.Sprintf("%d", h)).Run()
+	resizeCacheMu.Lock()
+	resizeCache[id] = [2]int{w, h}
+	resizeCacheMu.Unlock()
 }
 
 func Kill(id string) error {
@@ -189,7 +261,14 @@ func Capture(id string, lines int) (string, error) {
 	_ = lines
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "-L", socketName, "capture-pane", "-p", "-t", id, "-e")
+	args := []string{"capture-pane", "-p", "-t", id, "-e"}
+	var base []string
+	if sock := OuterSocket(); sock != "" {
+		base = []string{"-S", sock}
+	} else {
+		base = []string{"-L", socketName}
+	}
+	cmd := exec.CommandContext(ctx, "tmux", append(base, args...)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -197,6 +276,168 @@ func Capture(id string, lines int) (string, error) {
 	return string(out), nil
 }
 
-func AttachCmd(id string) *exec.Cmd {
-	return tmux("attach-session", "-t", id)
+// SplitRight creates a horizontal split to the right of targetPane and
+// attaches the agent session inside it. `muxCols` is the width (cols) the
+// caller wants the LEFT pane (mux) to keep; the new agent pane gets the
+// remainder. Falls back to a 50/50 split if the current pane width can't
+// be measured or is too narrow to spare muxCols.
+//
+// `TMUX=` in attachShell unsets the inherited tmux client env so the nested
+// attach doesn't trip tmux's "sessions should be nested with care" warning.
+func SplitRight(targetPane, agentSession string, muxCols int) (string, error) {
+	args := []string{
+		"split-window", "-h", "-d", "-t", targetPane,
+		"-P", "-F", "#{pane_id}",
+	}
+	if paneW, err := paneWidth(targetPane); err == nil && paneW > muxCols+10 {
+		agentW := paneW - muxCols
+		args = append(args, "-l", fmt.Sprintf("%d", agentW))
+	}
+	args = append(args, attachShell(agentSession))
+	out, err := tmux(args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux split-window: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// paneWidth returns the column width of the given tmux pane.
+func paneWidth(pane string) (int, error) {
+	out, err := tmux("display-message", "-p", "-t", pane, "#{pane_width}").Output()
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// PaneDims returns (cols, rows) of the given pane.
+func PaneDims(pane string) (int, int, error) {
+	out, err := tmux("display-message", "-p", "-t", pane, "#{pane_width} #{pane_height}").Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) < 2 {
+		return 0, 0, fmt.Errorf("paneDims: unexpected output %q", string(out))
+	}
+	w, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	h, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return w, h, nil
+}
+
+// RespawnPane kills whatever's running in pane and replaces it with an attach
+// to agentSession. Used when swapping the right-side display from one agent
+// to another. Idempotent — if pane no longer exists, returns an error.
+func RespawnPane(pane, agentSession string) error {
+	out, err := tmux("respawn-pane", "-k", "-t", pane, attachShell(agentSession)).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux respawn-pane: %w: %s", err, out)
+	}
+	return nil
+}
+
+// attachShell returns the shell command run inside a fresh tmux pane to
+// attach to the given agent session. TMUX= unsets the nesting guard.
+func attachShell(agentSession string) string {
+	sock := OuterSocket()
+	if sock == "" {
+		return fmt.Sprintf("tmux -L %s attach-session -t %s", socketName, agentSession)
+	}
+	return fmt.Sprintf("TMUX= tmux -S %s attach-session -t %s", sock, agentSession)
+}
+
+// KillPane kills the given pane id. Safe to call on a pane that no longer
+// exists — error is swallowed.
+func KillPane(pane string) {
+	_ = tmux("kill-pane", "-t", pane).Run()
+}
+
+// PaneExists reports whether a tmux pane with the given id is alive.
+func PaneExists(pane string) bool {
+	if pane == "" {
+		return false
+	}
+	return tmux("display-message", "-p", "-t", pane, "ok").Run() == nil
+}
+
+// SelectPane focuses the given pane (moves the cursor / input focus there).
+func SelectPane(pane string) error {
+	return tmux("select-pane", "-t", pane).Run()
+}
+
+// SetPaneZoom sets the pane's zoom state to want. Queries tmux's
+// window_zoomed_flag first so calls are idempotent — repeated invocations
+// with the same target state are no-ops, avoiding the visible toggle a
+// blind resize-pane -Z would cause.
+func SetPaneZoom(pane string, want bool) {
+	if pane == "" {
+		return
+	}
+	out, err := tmux("display-message", "-p", "-t", pane, "#{window_zoomed_flag}").Output()
+	if err != nil {
+		return
+	}
+	cur := strings.TrimSpace(string(out)) == "1"
+	if cur == want {
+		return
+	}
+	_ = tmux("resize-pane", "-Z", "-t", pane).Run()
+}
+
+// ZoomPane toggles tmux's zoom on the given pane. Selects the pane first
+// so resize-pane -Z (which acts on the active pane) targets the right one.
+func ZoomPane(pane string) error {
+	if err := tmux("select-pane", "-t", pane).Run(); err != nil {
+		return fmt.Errorf("select-pane: %w", err)
+	}
+	out, err := tmux("resize-pane", "-Z", "-t", pane).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("resize-pane -Z: %w: %s", err, out)
+	}
+	return nil
+}
+
+// FindClientForSession returns the tmux client name (tty path) of the most
+// recently active client attached to the given session. "" if no client.
+// Used to track the nested tmux client mux launched in the right pane so
+// we can switch its viewed session without respawning the pane.
+func FindClientForSession(sess string) string {
+	out, err := tmux("list-clients", "-F", "#{client_name}|#{client_activity}", "-t", sess).Output()
+	if err != nil {
+		return ""
+	}
+	var best string
+	var bestT int64 = -1
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		t, _ := strconv.ParseInt(parts[1], 10, 64)
+		if t > bestT {
+			best = parts[0]
+			bestT = t
+		}
+	}
+	return best
+}
+
+// SwitchClient changes which session a tmux client views. The client process
+// keeps running — only the displayed session changes. Avoids the kill+attach
+// flicker that respawn-pane causes.
+func SwitchClient(client, newSession string) error {
+	if client == "" {
+		return fmt.Errorf("SwitchClient: empty client")
+	}
+	return tmux("switch-client", "-c", client, "-t", newSession).Run()
 }

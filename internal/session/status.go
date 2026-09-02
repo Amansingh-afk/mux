@@ -66,32 +66,43 @@ func containsAny(s string, runes []rune) bool {
 // on markdown quotes, diff hunks, and shell output.
 var promptPrefixes = []string{"> ", "❯ ", "$ ", "» ", "│ > ", "▌ > ", "│ >", "▌ >"}
 
-// looksWaiting checks whether the LAST non-empty line of the pane looks like
-// an idle input prompt. Anchoring to the tail avoids false positives from
-// body content (quoted replies, diff output, code blocks) earlier in the pane.
+// looksWaiting scans the tail of the pane for a prompt marker. TUIs like
+// Claude Code render chrome below the actual input box ("? for shortcuts",
+// "[Request interrupted]"), so checking only the last line misses the real
+// `❯ ` prompt. tailScan caps the scan depth so markdown quotes (`> ...`)
+// in earlier scrollback can't false-positive as a prompt.
 func looksWaiting(content string) bool {
 	content = strings.TrimRight(content, "\n \t")
 	lines := strings.Split(content, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
+	const tailScan = 8
+	start := len(lines) - tailScan
+	if start < 0 {
+		start = 0
+	}
+	for i := len(lines) - 1; i >= start; i-- {
 		l := stripANSI(lines[i])
 		trimmed := strings.TrimLeft(l, " \t")
 		if strings.TrimSpace(trimmed) == "" {
 			continue
 		}
 		for _, p := range promptPrefixes {
-			if strings.HasPrefix(trimmed, p) {
+			// tmux capture (and the whole-content TrimRight above) can eat
+			// the trailing space after a bare prompt marker, so a marker
+			// alone on the line must also count.
+			if strings.HasPrefix(trimmed, p) || trimmed == strings.TrimRight(p, " ") {
 				return true
 			}
 		}
-		return false
 	}
 	return false
 }
 
 // ansiRe matches the common escape families we see in agent output:
-//   CSI  ESC [ params final-byte
-//   OSC  ESC ] ... BEL or ESC \
-//   SS2/SS3 + simple 2-char sequences (ESC + alnum)
+//
+//	CSI  ESC [ params final-byte
+//	OSC  ESC ] ... BEL or ESC \
+//	SS2/SS3 + simple 2-char sequences (ESC + alnum)
+//
 // narrower than a full vt100 parser, but covers SGR colors, cursor moves, and
 // the title/notify sequences claude/codex emit.
 var ansiRe = regexp.MustCompile(

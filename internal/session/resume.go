@@ -13,10 +13,14 @@ import (
 // canonical uuid v4-ish match: 8-4-4-4-12 hex with dashes.
 var uuidRe = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 
+// uuidExactRe anchors uuidRe for whole-string validation; uuidRe stays
+// unanchored for extraction from filenames.
+var uuidExactRe = regexp.MustCompile(`^` + uuidRe.String() + `$`)
+
 // ValidUUID returns true if s looks like a real provider session uuid.
 // Used to reject stale malformed uuids from earlier buggy captures.
 func ValidUUID(s string) bool {
-	return uuidRe.MatchString(s)
+	return uuidExactRe.MatchString(s)
 }
 
 // providerSessionDir maps provider name to a function that returns the
@@ -149,39 +153,51 @@ func CaptureUUID(provider, cwd string, before Snapshot, timeout time.Duration) s
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		time.Sleep(500 * time.Millisecond)
-		after := snapshotJsonls(dir)
-		// prefer entries not in `before` (new file)
-		type cand struct {
-			name string
-			mod  time.Time
-		}
-		var news []cand
-		for name, mod := range after {
-			if _, existed := before[name]; !existed {
-				news = append(news, cand{name, mod})
-				continue
-			}
-			// also accept files that existed but got touched after spawn
-			if !before[name].Equal(mod) && mod.After(before[name]) {
-				news = append(news, cand{name, mod})
-			}
-		}
-		if len(news) == 0 {
-			continue
-		}
-		// newest mtime wins — this is spawn-order correlation
-		sort.Slice(news, func(i, j int) bool { return news[i].mod.After(news[j].mod) })
-		if u := uuidFromFilename(provider, news[0].name); u != "" {
+		if u := scanNewJsonl(provider, dir, before); u != "" {
 			return u
 		}
 	}
 	return ""
 }
 
+// scanNewJsonl performs one mtime-diff pass over dir: any jsonl that is new
+// (absent from `before`) or touched since the snapshot is a candidate; the
+// newest mtime wins (spawn-order correlation). Returns the extracted uuid or
+// "". No-op ("" ) when dir is empty.
+func scanNewJsonl(provider, dir string, before Snapshot) string {
+	if dir == "" {
+		return ""
+	}
+	after := snapshotJsonls(dir)
+	type cand struct {
+		name string
+		mod  time.Time
+	}
+	var news []cand
+	for name, mod := range after {
+		if _, existed := before[name]; !existed {
+			news = append(news, cand{name, mod})
+			continue
+		}
+		// also accept files that existed but got touched after spawn
+		if !before[name].Equal(mod) && mod.After(before[name]) {
+			news = append(news, cand{name, mod})
+		}
+	}
+	if len(news) == 0 {
+		return ""
+	}
+	// newest mtime wins — this is spawn-order correlation
+	sort.Slice(news, func(i, j int) bool { return news[i].mod.After(news[j].mod) })
+	return uuidFromFilename(provider, news[0].name)
+}
+
 // uuidFromFilename extracts the provider's native session uuid from a jsonl
 // filename. Returns "" if no valid uuid can be pulled.
-//   claude: "<uuid>.jsonl"  (uuid includes dashes)
-//   codex:  "rollout-<YYYY>-<MM>-<DD>T<HHMMSS>-<uuid>.jsonl"
+//
+//	claude: "<uuid>.jsonl"  (uuid includes dashes)
+//	codex:  "rollout-<YYYY>-<MM>-<DD>T<HHMMSS>-<uuid>.jsonl"
+//
 // both match uuidRe; the regex handles either layout.
 func uuidFromFilename(provider, name string) string {
 	name = strings.TrimSuffix(name, ".jsonl")

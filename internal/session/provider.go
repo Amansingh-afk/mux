@@ -5,6 +5,7 @@ import "os/exec"
 type Provider struct {
 	Name       string
 	Cmd        string
+	PreArgs    []string // root flags emitted immediately after Cmd in BOTH normal and resume spawns (e.g. codex -c notify=...)
 	Args       []string
 	Available  bool
 	Hint       string   // install hint when missing

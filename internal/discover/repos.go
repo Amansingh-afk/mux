@@ -10,11 +10,13 @@ import (
 type Repo struct {
 	Name string
 	Path string
+	Kind string // "repo" (has .git) or "dir" (plain folder)
 }
 
-// Repos scans the given roots for git repositories up to maxDepth deep.
-// Directories containing a .git entry are reported; descent into them stops.
-// Hidden dirs (other than .git) and common heavy dirs are skipped.
+// Repos walks the given roots up to maxDepth deep and reports every visited
+// directory. A dir with a .git entry is tagged Kind="repo" and descent stops
+// there; all other dirs are tagged Kind="dir". Roots themselves are not
+// reported. Hidden dirs (other than .git) and common heavy dirs are skipped.
 func Repos(roots []string, maxDepth int) []Repo {
 	seen := map[string]struct{}{}
 	var out []Repo
@@ -52,15 +54,26 @@ func scan(dir string, depth, maxDepth int, seen map[string]struct{}, out *[]Repo
 	if err != nil {
 		return
 	}
+	isRepo := false
 	for _, e := range entries {
 		if e.Name() == ".git" {
-			if _, dup := seen[dir]; dup {
-				return
-			}
-			seen[dir] = struct{}{}
-			*out = append(*out, Repo{Name: filepath.Base(dir), Path: dir})
-			return
+			isRepo = true
+			break
 		}
+	}
+	// emit this dir (skip the root itself at depth 0)
+	if depth > 0 {
+		if _, dup := seen[dir]; !dup {
+			seen[dir] = struct{}{}
+			kind := "dir"
+			if isRepo {
+				kind = "repo"
+			}
+			*out = append(*out, Repo{Name: filepath.Base(dir), Path: dir, Kind: kind})
+		}
+	}
+	if isRepo {
+		return // don't descend into repos
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
