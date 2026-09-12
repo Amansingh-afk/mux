@@ -223,26 +223,10 @@ func transcriptSignal(a AgentRef) (NativeSignal, bool) {
 }
 
 // transcriptPath locates the session jsonl inside dir for the given uuid.
-// claude names files "<uuid>.jsonl" (direct join, no ReadDir). Other layouts
-// (codex "rollout-<ts>-<uuid>.jsonl") embed the uuid in the name, so scan.
+// Delegates to tokenTranscriptPath: claude is a direct join, codex rollouts
+// live under dated subdirs and need the bounded walk.
 func transcriptPath(provider, dir, uuid string) string {
-	if provider == "claude" {
-		return filepath.Join(dir, uuid+".jsonl")
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if strings.HasSuffix(name, ".jsonl") && strings.Contains(name, uuid) {
-			return filepath.Join(dir, name)
-		}
-	}
-	return ""
+	return tokenTranscriptPath(provider, dir, uuid)
 }
 
 // NativeProbe returns the best provider-native status signal for an agent,

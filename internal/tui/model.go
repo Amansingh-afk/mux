@@ -31,7 +31,6 @@ type Model struct {
 	providerCur  int
 	picker       repoPicker
 	renameBuf    string
-	statusMsg    string
 	adoptItems   []adoptItem
 	adoptCur     int
 	adoptLoading bool
@@ -44,6 +43,12 @@ type Model struct {
 	// loading is true during the boot splash: mux still owns the full window
 	// (no split yet) and renders a centered wordmark until bootRevealMsg.
 	loading bool
+	// lastTabBar caches the last content pushed to the tmux tab strip so the
+	// per-tick refresh (waiting counts) only forks tmux on actual change.
+	lastTabBar string
+	// yankBuf holds the last yanked agent output (y), pasted with p.
+	yankBuf  string
+	yankFrom string
 
 	// rightPane is the outer-tmux pane id mux uses to display the active
 	// agent next to itself. "" before first split. Lifecycle: created on
@@ -55,6 +60,10 @@ type Model struct {
 	// running in the right pane. Used by SwitchClient so swapping agents
 	// doesn't kill+re-attach (no flicker).
 	rightClient string
+	// refocusAgent marks that an overlay pulled keyboard focus onto mux
+	// (alt-chord opened from inside an agent); focus returns to the agent
+	// pane when the overlay closes.
+	refocusAgent bool
 }
 
 type agentStatusRec struct {
@@ -62,6 +71,9 @@ type agentStatusRec struct {
 	hash        uint64
 	stableTicks int
 	lastNotify  time.Time
+	// tokens is the agent's cumulative transcript token usage, refreshed on
+	// the status tick. 0 = unknown (no transcript / uuid not captured yet).
+	tokens int64
 }
 
 type tickMsg time.Time
@@ -76,6 +88,9 @@ type captureRec struct {
 	// native is the provider-native status signal probed alongside the pane
 	// capture; nil when no signal exists for this agent this tick.
 	native *session.NativeSignal
+	// tokens is cumulative transcript usage; -1 when unknown this tick (the
+	// previous value is kept).
+	tokens int64
 }
 type statusBatchMsg []captureRec
 type aliveMsg map[string]bool

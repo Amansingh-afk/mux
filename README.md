@@ -25,56 +25,52 @@ mux
 - **tabs** = projects (one tab per open repo), rendered in tmux's own status line
 - **sidebar** = agents in the current project (mux's pane, left)
 - **agent pane** = the selected agent's real tmux pane, right — not a preview, the actual session
-- **enter** = focus the agent and type; `M-Space` (alt+space) bounces you back
+- **alt is the keymap** = every action is one prefixless alt chord that works from anywhere, even mid-sentence inside an agent; `M-Space` bounces focus mux ↔ agent when you need the sidebar itself
 
 mux doesn't render another TUI inside your TUI. it splits a real tmux pane next to itself and steps out of the way when you want to talk to an agent.
 
 ## quick start
 
 1. `mux` (wraps itself in tmux if you're not in one)
-2. press `o`, fuzzy-pick a repo (discovers git repos under `~`, `~/code`, `~/src`, cwd, etc.)
-3. press `n`, pick a provider — the agent appears in the right pane
-4. press `enter` to focus it and type; `M-Space` to hop back
-5. `M-[` / `M-]` or `M-1–9` to jump tabs, `M-j` / `M-k` to switch agents — from anywhere
+2. press `M-o` (alt+o), fuzzy-pick a repo (discovers git repos under `~`, `~/code`, `~/src`, cwd, etc.)
+3. press `M-n`, pick a provider — the agent appears in the right pane, already focused: type
+4. `M-h` / `M-l` or `M-1–9` to jump tabs, `M-j` / `M-k` to switch agents — from anywhere, mid-typing
 
 ## keys
 
+one keymap, everywhere: every chord below works identically whether keyboard focus is on mux or inside an agent — mux installs them as prefixless tmux bindings at startup and removes them on quit (your original bindings on those keys are restored). no `C-b`, no focus dance. disable the global layer with `quick_nav = false` in the config (chords then work only with mux focused).
+
 ### projects
-| key        | action                              |
-| ---------- | ----------------------------------- |
-| `o`        | open project (fuzzy picker)         |
-| `w`        | close tab (agents keep running)     |
-| `W`        | close tab + kill all its agents     |
-| `[` / `]`  | prev / next tab                     |
-| `h` / `l`  | prev / next tab                     |
-| `1 – 9`    | jump to tab N                       |
+| key             | action                              |
+| --------------- | ----------------------------------- |
+| `M-o`           | open project (fuzzy picker)         |
+| `M-h` / `M-l`   | prev / next tab (also `M-←` / `M-→`) |
+| `M-1 – M-9`     | jump to tab N                       |
+| `M-w`           | close tab (agents keep running)     |
+| `M-W`           | close tab + kill all its agents     |
 
 ### agents
+| key             | action                              |
+| --------------- | ----------------------------------- |
+| `M-j` / `M-k`   | next / prev agent (also `M-↓` / `M-↑`) |
+| `M-n`           | spawn agent in current project      |
+| `enter`         | attach / resume selected agent      |
+| `M-space`       | toggle focus mux ↔ agent            |
+| `M-x`           | kill agent (again to forget; enter to resume) |
+| `M-r`           | rename selected agent               |
+| `M-i`           | adopt an existing provider session  |
+| `M-v`           | review agent's diff vs base         |
+| `M-M`           | merge agent's branch into base      |
+| `M-z`           | zen mode (zoom agent fullscreen)    |
+
+### misc — with mux focused
 | key        | action                              |
 | ---------- | ----------------------------------- |
-| `n`        | spawn agent in current project      |
-| `enter`    | attach to selected agent            |
-| `d`        | kill agent (again to forget)        |
-| `r`        | rename selected agent               |
-| `i`        | adopt an existing provider session  |
-| `j` / `k`  | move agent cursor                   |
-| `z`        | zen mode (zoom agent fullscreen)    |
-
-### anywhere — even while typing in an agent
-| key           | action                           |
-| ------------- | -------------------------------- |
-| `M-j` / `M-k` | next / prev agent                |
-| `M-1 – M-9`   | jump to tab N                    |
-| `M-[` / `M-]` | prev / next tab                  |
-| `M-space`     | toggle focus mux ↔ agent         |
-
-the alt layer is a set of prefixless tmux bindings mux installs at startup and removes on quit (your original bindings on those keys are restored). switching agents or tabs from inside a chat is one keystroke — no `C-b` needed. disable with `quick_nav = false` in the config.
-
-### misc
-| key        | action                              |
-| ---------- | ----------------------------------- |
+| `y` / `p`  | yank agent output / paste into agent as prompt |
 | `?`        | help                                |
-| `q` / `C-c`| quit                                |
+| `q` / `C-c`| quit (`M-q` from anywhere)          |
+
+`M-b` `M-f` `M-d` `M-.` `M-y` `M-p` are deliberately untouched — readline/zsh word navigation, kill-word, last-arg and yank-pop keep working inside shell agents and provider input boxes.
 
 ## providers
 
@@ -108,11 +104,31 @@ detection uses provider-native signals where possible, pane heuristics otherwise
 
 native signals win when fresh; pane motion overrides a stale native signal; with nothing native, behavior is exactly the heuristic path. turn off all injection with `native_status = false` in the config file — spawns are then byte-identical to plain `claude` / `codex`.
 
+the tab strip shows `◐N` next to any project with N agents waiting on you — cross-project awareness without switching tabs. the sidebar shows each agent's cumulative token usage (parsed from the provider transcript, cache reads included) next to its provider icon.
+
+## worktrees
+
+every coding agent gets its own git worktree and branch (`mux/<codename>`), created from the base tree's HEAD at spawn. the base tree stays yours — agents never touch it. shells and non-git directories run in the base.
+
+- `M-v` — full-screen review pane, built into mux (no external pager needed): the agent's complete delta vs base, sectioned into committed / uncommitted / untracked, with a file strip, dual line-number gutters, and a **merge prediction** in the header — `merges clean ✓`, `⚠ will conflict: <files>` (via `git merge-tree`), or `⚠ merge blocked: untracked in base: <files>` — so you know how `M-M` will land before pressing it. `j`/`k` scroll, `n`/`N` jump files, `q` returns to the agent
+- `M-M` — merge the agent's branch into the base (uncommitted worktree changes get a wip commit first). clean merge → done. conflict → the right pane becomes [lazygit](https://github.com/jesseduffield/lazygit) in the base tree when installed (visual hunk-by-hunk resolution), your shell otherwise; `q`/exit returns to the agent. any other merge failure renders git's actual reason as a styled page in the same pane
+- forgetting an agent (`M-x` `M-x`) removes its worktree; the branch is deleted only when fully merged — unmerged commits are never silently dropped
+- agent needs code that just landed on base? tell it: "merge main into your branch and fix conflicts" — conflicts stay in *its* worktree
+
+gitignored files agents need (`.env` etc): list them in `.worktreeinclude` at the repo root ([the convention claude code and conductor use](https://code.claude.com/docs/en/worktrees)) — gitignore syntax, matched files are copied into every new worktree. dependency install:
+
+```toml
+[worktree]
+setup = "pnpm i"   # runs visibly in the agent's pane before the agent starts
+```
+
+worktrees live under `~/.local/share/mux/worktrees/`. go repos need no setup at all (global module/build caches); node repos want pnpm (content-addressed store → installs are hardlinks).
+
 ## resume & adopt
 
 agents survive reboots. a dead agent (tmux gone) stays in the sidebar as `✕` — press `enter` and mux respawns it with the provider's resume flag and the captured session uuid (`claude --resume <uuid>`, `codex resume <uuid>`, …). no uuid known → the provider's own session picker opens instead.
 
-press `i` to adopt: mux lists provider-native sessions recorded for the current repo (`~/.claude/projects/<slug>/`, `~/.codex/sessions/`) that it isn't tracking yet — newest first, with a first-message preview. adopting adds the session as a dead agent; `enter` resumes it. read-only: mux never touches provider files.
+press `M-i` to adopt: mux lists provider-native sessions recorded for the current repo (`~/.claude/projects/<slug>/`, `~/.codex/sessions/`) that it isn't tracking yet — newest first, with a first-message preview. adopting adds the session as a dead agent; `enter` resumes it. read-only: mux never touches provider files.
 
 ## config
 
@@ -138,7 +154,7 @@ missing file = defaults. malformed file = loud error at startup. unknown keys = 
 
 ## codenames
 
-agents are auto-named from a pool of ~200 aesthetic single words: celestial, mythology (greek / norse / hindi), nature, minerals, french, spanish, cartoon characters (shaktiman, bheem, motu, patlu). rename any time with `r`.
+agents are auto-named from a pool of ~200 aesthetic single words: celestial, mythology (greek / norse / hindi), nature, minerals, french, spanish, cartoon characters (shaktiman, bheem, motu, patlu). rename any time with `M-r`.
 
 ## hooks
 

@@ -186,22 +186,28 @@ func (m Model) renderSidebar(w, h int) string {
 				}
 			}
 			pIcon := providerIcon(a.Provider, dead)
-			nameW := w - 6 // marker 2 + status 1 + gap 1 + gap 1 + icon 1
+			// right column: token meter (dim, blank until the transcript uuid
+			// is captured) + provider icon.
+			right := pIcon
+			if tok := m.statusRec[a.ID].tokens; tok > 0 && !dead {
+				right = lipgloss.NewStyle().Foreground(colorDim).Render(session.FormatTokens(tok)) + " " + pIcon
+			}
+			nameW := w - 6 - 5 // marker 2 + status 1 + gaps 2 + icon 1, meter ≤5
 			if nameW < 4 {
 				nameW = 4
 			}
 			left := marker + icon + " " + labelStyle.Render(truncName(label, nameW))
-			pad := w - lipgloss.Width(left) - lipgloss.Width(pIcon)
+			pad := w - lipgloss.Width(left) - lipgloss.Width(right)
 			if pad < 1 {
 				pad = 1
 			}
-			agentRows = append(agentRows, clipLine(left+strings.Repeat(" ", pad)+pIcon, w))
+			agentRows = append(agentRows, clipLine(left+strings.Repeat(" ", pad)+right, w))
 		}
 	}
 
 	// viewport windowing (reserve: 3 for agents header block + 4 for project footer)
 	headerBlock := 3 // HEADER, divider, blank
-	footerBlock := 5 // blank, PROJECT header, divider, path, branch
+	footerBlock := 5 // blank, PROJECT header, divider, name, path
 	available := h - headerBlock - footerBlock
 	if available < 1 {
 		available = h - headerBlock
@@ -258,28 +264,28 @@ func (m Model) renderHelp() string {
 
 	lines := []string{
 		title,
+		lipgloss.NewStyle().Foreground(colorDim).Render("alt chords work anywhere — even while typing in an agent"),
 		sec("projects"),
-		row("o", "open project (fzf)"),
-		row("w", "close tab (agents survive)"),
-		row("W", "close tab + kill all agents"),
-		row("[ / ]", "prev / next tab"),
-		row("1 – 9", "jump to tab N"),
-		sec("agents"),
-		row("n", "spawn agent in current project"),
-		row("enter", "show + focus selected agent (C-b ← to return)"),
-		row("d", "kill agent (again to forget; enter to resume)"),
-		row("r", "rename selected agent"),
-		row("i", "adopt existing provider session"),
-		row("j / k", "move agent cursor"),
-		row("z", "zen mode (zoom agent fullscreen, C-b z to exit)"),
-		sec("anywhere (even inside an agent)"),
-		row("M-j / M-k", "next / prev agent"),
+		row("M-o", "open project (fuzzy picker)"),
+		row("M-h / M-l", "prev / next tab (also M-←/→)"),
 		row("M-1 – M-9", "jump to tab N"),
-		row("M-[ / M-]", "prev / next tab"),
+		row("M-w", "close tab (agents survive)"),
+		row("M-W", "close tab + kill all agents"),
+		sec("agents"),
+		row("M-j / M-k", "next / prev agent (also M-↓/↑)"),
+		row("M-n", "spawn agent in current project"),
+		row("enter", "attach / resume selected agent"),
 		row("M-space", "toggle focus mux ↔ agent"),
+		row("M-x", "kill agent (again to forget; enter to resume)"),
+		row("M-r", "rename selected agent"),
+		row("M-i", "adopt existing provider session"),
+		row("M-v", "review agent's diff vs base (q to close)"),
+		row("M-M", "merge agent's branch into base"),
+		row("M-z", "zen mode (zoom agent fullscreen, C-b z to exit)"),
 		sec("misc"),
-		row("?", "toggle this help"),
-		row("q / C-c", "quit"),
+		row("y / p", "yank agent output / paste to agent (mux focused)"),
+		row("?", "toggle this help (mux focused)"),
+		row("M-q", "quit (q / C-c with mux focused)"),
 		"",
 		lipgloss.NewStyle().Foreground(colorDim).Render("esc or ? to close"),
 	}
@@ -287,7 +293,7 @@ func (m Model) renderHelp() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorBorder).
 		Padding(1, 2).
-		Width(52).
+		Width(70).
 		Render(strings.Join(lines, "\n"))
 }
 

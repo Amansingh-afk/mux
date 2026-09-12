@@ -26,6 +26,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if mp := session.OuterPane(); mp != "" {
 			session.SetPaneZoom(mp, nowModal)
 		}
+		// overlays opened via the alt layer grabbed keyboard focus onto mux;
+		// hand it back to the agent when the overlay closes.
+		if !nowModal && mm.refocusAgent {
+			mm.refocusAgent = false
+			if mm.rightPane != "" && session.PaneExists(mm.rightPane) {
+				_ = session.SelectPane(mm.rightPane)
+			}
+		}
 	}
 	return mm, cmd
 }
@@ -49,10 +57,17 @@ func (m Model) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case bootRevealMsg:
 		m.loading = false
+		// entering mux should land you in your last agent already running:
+		// when the restored selection's tmux session is gone (reboot, killed
+		// server), resume it now instead of waiting for enter. Checked via
+		// Exists, not aliveCache — the first aliveMsg may not have landed yet.
+		if a := m.currentAgent(); a != nil && !session.Exists(a.ID) {
+			return m.attachCurrent()
+		}
 		return m, m.swapToCurrentAgent()
 
 	case tickMsg:
-		return m, tea.Batch(tick(), refreshAlive(), m.captureAllForStatus())
+		return m, tea.Batch(tick(), refreshAlive(), m.captureAllForStatus(), m.backfillUUIDs())
 
 	case spinTickMsg:
 		m.spinnerFrame++
@@ -62,6 +77,9 @@ func (m Model) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, p := range msg {
 			m.classifyAndNotify(p)
 		}
+		// waiting counts render in the tab strip; cached push = free when
+		// nothing changed.
+		m.pushTabBar()
 		return m, nil
 
 	case aliveMsg:
@@ -93,6 +111,9 @@ func (m Model) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case mergeDoneMsg:
+		return m.handleMergeDone(msg)
+
 	case adoptListMsg:
 		// ignore a scan that raced a tab switch — it lists another project.
 		if m.mode == modeAdopt {
@@ -108,6 +129,16 @@ func (m Model) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// focusForOverlay pulls keyboard focus onto mux's pane so the overlay being
+// opened receives typed input even when its alt chord was pressed inside an
+// agent pane; refocusAgent hands focus back when the overlay closes.
+func (m *Model) focusForOverlay() {
+	m.refocusAgent = true
+	if mp := session.OuterPane(); mp != "" {
+		_ = session.SelectPane(mp)
+	}
 }
 
 func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -131,13 +162,17 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// one keymap, both ways: every action is an alt chord, identical whether
+	// focus sits on mux or inside an agent (the quicknav layer forwards the
+	// alt key itself). The few plain keys left (enter, y, p, ?, q) only make
+	// sense with mux focused and have no safe alt slot or no need for one.
 	switch k.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c", "q", "alt+q":
 		_ = m.store.Save()
 		m.clearRightPane()
 		return m, tea.Quit
 
-	case "j", "down":
+	case "alt+j", "alt+down":
 		p := m.currentProject()
 		if p != nil && m.sidebarCur < len(p.Agents)-1 {
 			m.sidebarCur++
@@ -148,7 +183,7 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "k", "up":
+	case "alt+k", "alt+up":
 		if m.sidebarCur > 0 {
 			m.sidebarCur--
 			if a := m.currentAgent(); a != nil {
@@ -160,47 +195,63 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "[", "shift+tab":
+	case "alt+h", "alt+left":
 		return m.prevTab()
 
-	case "]":
+	case "alt+l", "alt+right":
 		return m.nextTab()
 
-	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		return m.jumpTab(int(k.String()[0] - '1'))
+	case "alt+1", "alt+2", "alt+3", "alt+4", "alt+5",
+		"alt+6", "alt+7", "alt+8", "alt+9":
+		return m.jumpTab(int(k.String()[4] - '1'))
 
-	case "o":
+	case "alt+o":
+		m.focusForOverlay()
 		m.mode = modeOpenProject
 		snap := m.store.Snapshot()
 		m.picker = newRepoPicker(snap.Projects)
 		return m, nil
 
-	case "w":
+	case "alt+w":
 		return m, m.closeCurrentTab(false)
 
-	case "W":
+	case "alt+W":
 		return m, m.closeCurrentTab(true)
 
-	case "n":
+	case "alt+n":
 		if m.currentProject() == nil {
-			m.statusMsg = "open a project first (o)"
 			return m, nil
 		}
+		m.focusForOverlay()
 		m.mode = modeSpawnAgent
 		m.providerCur = 0
 		return m, nil
 
-	case "d":
+	case "alt+x":
 		return m, m.killCurrentAgent()
 
-	case "i":
+	case "alt+i":
+		m.focusForOverlay()
 		return m.startAdopt()
 
-	case "r":
+	case "y":
+		return m.yankCurrent()
+
+	case "p":
+		return m.pasteIntoCurrent()
+
+	case "alt+v":
+		return m.viewDiffCurrent()
+
+	case "alt+M":
+		return m.mergeCurrent()
+
+	case "alt+r":
 		a := m.currentAgent()
 		if a == nil {
 			return m, nil
 		}
+		m.focusForOverlay()
 		m.mode = modeRenameAgent
 		m.renameBuf = a.Name
 		return m, nil
@@ -208,7 +259,7 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.attachCurrent()
 
-	case "z":
+	case "alt+z":
 		// zen mode: zoom the right (agent) pane to fill the window. mux
 		// pane disappears until user un-zooms via tmux's own toggle (C-b z).
 		// Resize the agent session after zoom so its TUI redraws at the
@@ -221,7 +272,6 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nudgeAgentCmd(m.rightPane, m.rightPaneAgent)
 		}
-		m.statusMsg = "no agent pane to zen"
 		return m, nil
 
 	case "?":

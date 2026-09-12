@@ -15,24 +15,55 @@ import (
 
 // pushTabBar pushes the project tab list to outer tmux's status-format[0]
 // so it renders in the full-width status line above (or below) all panes.
-// Called whenever tab membership or active tab changes.
-func (m Model) pushTabBar() {
+// Called on tab membership / active-tab changes and on every status batch
+// (waiting counts live in the strip); the lastTabBar cache makes repeat
+// pushes free, so the 2s tick doesn't fork tmux when nothing changed.
+func (m *Model) pushTabBar() {
 	snap := m.store.Snapshot()
+	var content string
 	if len(snap.OpenTabs) == 0 {
-		session.SetTopTabs("#[fg=colour244] mux · press o to open a project ")
+		content = "#[fg=colour244] mux · press o to open a project "
+	} else {
+		waiting := m.waitingByProject(snap)
+		var b strings.Builder
+		b.WriteString("#[fg=colour205,bold] mux #[default] ")
+		for i, path := range snap.OpenTabs {
+			if i > 0 {
+				b.WriteString("#[fg=colour240]│#[default]")
+			}
+			name := truncName(filepath.Base(path), 16)
+			label := fmt.Sprintf("%d %s", i+1, name)
+			b.WriteString(session.FormatTab(label, i == m.activeTab))
+			if n := waiting[path]; n > 0 {
+				// amber ◐ matches the sidebar waiting icon: this project has
+				// agents that need you, visible without switching tabs.
+				b.WriteString(fmt.Sprintf("#[fg=colour214]◐%d #[default]", n))
+			}
+		}
+		content = b.String()
+	}
+	if content == m.lastTabBar {
 		return
 	}
-	var b strings.Builder
-	b.WriteString("#[fg=colour205,bold] mux #[default] ")
-	for i, path := range snap.OpenTabs {
-		if i > 0 {
-			b.WriteString("#[fg=colour240]│#[default]")
+	m.lastTabBar = content
+	session.SetTopTabs(content)
+}
+
+// waitingByProject counts live agents currently in StatusWaiting per project
+// path, for the tab-strip badges.
+func (m Model) waitingByProject(snap state.State) map[string]int {
+	out := map[string]int{}
+	for _, p := range snap.Projects {
+		for _, a := range p.Agents {
+			if a.Dead || !m.aliveCache[a.ID] {
+				continue
+			}
+			if m.statusRec[a.ID].status == session.StatusWaiting {
+				out[p.Path]++
+			}
 		}
-		name := truncName(filepath.Base(path), 16)
-		label := fmt.Sprintf("%d %s", i+1, name)
-		b.WriteString(session.FormatTab(label, i == m.activeTab))
 	}
-	session.SetTopTabs(b.String())
+	return out
 }
 
 func (m Model) prevTab() (tea.Model, tea.Cmd) {
@@ -111,6 +142,9 @@ func (m *Model) closeCurrentTab(killAgents bool) tea.Cmd {
 			}
 			for _, a := range proj.Agents {
 				_ = session.Kill(a.ID)
+				if a.Worktree != "" {
+					_ = session.RemoveWorktree(path, a.Worktree, a.Branch, session.BranchMerged(path, a.Branch))
+				}
 				m.store.RemoveAgent(path, a.ID)
 			}
 		}
@@ -138,17 +172,14 @@ func (m Model) handleOpenProject(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		it := m.picker.selectedOrLiteral()
 		if it == nil {
-			m.statusMsg = "no match"
 			return m, nil
 		}
 		abs, err := filepath.Abs(it.path)
 		if err != nil {
-			m.statusMsg = "bad path: " + err.Error()
 			m.mode = modeNormal
 			return m, nil
 		}
 		if info, err := os.Stat(abs); err != nil || !info.IsDir() {
-			m.statusMsg = "not a dir: " + abs
 			m.mode = modeNormal
 			return m, nil
 		}

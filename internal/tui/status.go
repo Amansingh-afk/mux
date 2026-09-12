@@ -57,11 +57,15 @@ func (m Model) captureAllForStatus() tea.Cmd {
 				if sig, ok := session.NativeProbe(ref); ok {
 					native = &sig
 				}
+				tokens := int64(-1)
+				if tu, ok := session.TokensFor(ref.Provider, ref.Dir, ref.SessionUUID); ok {
+					tokens = tu.Total()
+				}
 				out, err := session.Capture(ref.ID, 40)
 				if err != nil {
 					return
 				}
-				results[i] = captureRec{id: ref.ID, out: out, native: native}
+				results[i] = captureRec{id: ref.ID, out: out, native: native, tokens: tokens}
 			}(i, ref)
 		}
 		wg.Wait()
@@ -73,6 +77,50 @@ func (m Model) captureAllForStatus() tea.Cmd {
 		}
 		return statusBatchMsg(caps)
 	}
+}
+
+// backfillUUIDs late-captures session uuids for live agents that have none —
+// spawn-time capture can miss (mux restarted mid-capture, or historical bugs).
+// One agent per project per tick to avoid attributing one session to two
+// agents; results ride the existing uuidCapturedMsg path.
+func (m Model) backfillUUIDs() tea.Cmd {
+	snap := m.store.Snapshot()
+	claimed := map[string]bool{}
+	for _, p := range snap.Projects {
+		for _, a := range p.Agents {
+			if a.SessionUUID != "" {
+				claimed[a.SessionUUID] = true
+			}
+		}
+	}
+	var cmds []tea.Cmd
+	for _, p := range snap.Projects {
+		for _, a := range p.Agents {
+			if a.SessionUUID != "" || a.Dead || !m.aliveCache[a.ID] {
+				continue
+			}
+			dir := a.Dir
+			if dir == "" {
+				dir = p.Path
+			}
+			// providers without discoverable session logs (shell, gemini,
+			// cursor for now) can never backfill — skipping them matters
+			// because the one-per-project slot must not be wasted on them.
+			if session.SessionDir(a.Provider, dir) == "" {
+				continue
+			}
+			provider, id, spawned, path := a.Provider, a.ID, a.SpawnedAt, p.Path
+			cmds = append(cmds, func() tea.Msg {
+				uuid := session.BackfillUUID(provider, dir, spawned, claimed)
+				return uuidCapturedMsg{projectPath: path, agentID: id, uuid: uuid}
+			})
+			break // one per project per tick
+		}
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // nativeFreshWindow: a native signal at most this old is authoritative and
@@ -113,7 +161,10 @@ func (m Model) classifyAndNotify(c captureRec) {
 			reason = n.Reason
 		}
 	}
-	rec := agentStatusRec{status: s, hash: h, stableTicks: t, lastNotify: prev.lastNotify}
+	rec := agentStatusRec{status: s, hash: h, stableTicks: t, lastNotify: prev.lastNotify, tokens: prev.tokens}
+	if c.tokens >= 0 {
+		rec.tokens = c.tokens
+	}
 	if prev.status != s && s == session.StatusWaiting && time.Since(prev.lastNotify) > 30*time.Second {
 		if a, p := m.agentByID(id); a != nil {
 			ctx := hooks.Context{

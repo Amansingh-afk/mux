@@ -28,6 +28,9 @@ discovery_roots = ["/abs/root"]
 native_status = false
 quick_nav = false
 
+[worktree]
+setup = "pnpm i"
+
 [providers.claude]
 args = ["--model", "opus"]
 
@@ -51,6 +54,9 @@ session_arg = ""
 	}
 	if cfg.QuickNav {
 		t.Error("quick_nav=false not honored")
+	}
+	if cfg.WorktreeSetup != "pnpm i" {
+		t.Errorf("worktree setup = %q", cfg.WorktreeSetup)
 	}
 	if len(cfg.DiscoveryRoots) != 1 || cfg.DiscoveryRoots[0] != "/abs/root" {
 		t.Errorf("discovery_roots = %v", cfg.DiscoveryRoots)

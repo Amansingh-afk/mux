@@ -53,8 +53,13 @@ type Config struct {
 	// Defaults to true when the file or key is absent.
 	NativeStatus bool
 	// QuickNav is the master switch for the prefixless alt-key tmux
-	// bindings (M-j/k, M-1..9, M-[/], M-Space). Defaults to true.
+	// bindings (the whole alt keymap: nav, actions, M-Space). With it off,
+	// alt chords still work while mux's pane has keyboard focus — the
+	// terminal delivers them directly. Defaults to true.
 	QuickNav bool
+	// WorktreeSetup is a shell command run inside every freshly created
+	// agent worktree before the agent starts (deps install etc). "" = none.
+	WorktreeSetup string
 	// Providers maps provider name → overlay/new-provider spec.
 	Providers map[string]ProviderConfig
 	// Warnings collects non-fatal issues (e.g. unknown keys).
@@ -68,6 +73,9 @@ type fileConfig struct {
 		NativeStatus   *bool    `toml:"native_status"`
 		QuickNav       *bool    `toml:"quick_nav"`
 	} `toml:"general"`
+	Worktree struct {
+		Setup string `toml:"setup"`
+	} `toml:"worktree"`
 	Providers map[string]ProviderConfig `toml:"providers"`
 }
 
@@ -130,6 +138,7 @@ func Load() (Config, error) {
 	if fc.General.QuickNav != nil {
 		cfg.QuickNav = *fc.General.QuickNav
 	}
+	cfg.WorktreeSetup = fc.Worktree.Setup
 	for _, r := range fc.General.DiscoveryRoots {
 		cfg.DiscoveryRoots = append(cfg.DiscoveryRoots, expandTilde(r))
 	}

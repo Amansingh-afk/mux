@@ -128,7 +128,6 @@ func (m *Model) ensureAgentVisible(agentID string) tea.Cmd {
 	}
 	pane, err := session.SplitRight(session.OuterPane(), agentID, muxCols)
 	if err != nil {
-		m.statusMsg = "split failed: " + err.Error()
 		return nil
 	}
 	m.rightPane = pane

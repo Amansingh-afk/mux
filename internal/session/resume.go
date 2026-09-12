@@ -115,29 +115,37 @@ func dirLock(key string) *sync.Mutex {
 // dir. Take one before Spawn, hand it to CaptureUUID after.
 type Snapshot map[string]time.Time
 
+// snapshotJsonls walks dir (bounded depth — codex nests rollouts under
+// YYYY/MM/DD, claude's dir is flat) and maps relative jsonl path → mtime.
 func snapshotJsonls(dir string) Snapshot {
 	out := Snapshot{}
 	if dir == "" {
 		return out
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasSuffix(name, ".jsonl") {
-			continue
-		}
-		info, err := e.Info()
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			continue
+			return nil
 		}
-		out[name] = info.ModTime()
-	}
+		rel, rerr := filepath.Rel(dir, path)
+		if rerr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if rel != "." && strings.Count(rel, string(filepath.Separator))+1 > codexWalkDepth {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(rel, ".jsonl") {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		out[rel] = info.ModTime()
+		return nil
+	})
 	return out
 }
 
@@ -189,7 +197,9 @@ func scanNewJsonl(provider, dir string, before Snapshot) string {
 	}
 	// newest mtime wins — this is spawn-order correlation
 	sort.Slice(news, func(i, j int) bool { return news[i].mod.After(news[j].mod) })
-	return uuidFromFilename(provider, news[0].name)
+	// names are dir-relative paths (codex nests rollouts); the uuid lives in
+	// the basename.
+	return uuidFromFilename(provider, filepath.Base(news[0].name))
 }
 
 // uuidFromFilename extracts the provider's native session uuid from a jsonl

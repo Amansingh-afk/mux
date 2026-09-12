@@ -19,6 +19,11 @@ type Agent struct {
 	SessionUUID string `json:"session_uuid,omitempty"`
 	LastSeen    int64  `json:"last_seen,omitempty"`
 	Dead        bool   `json:"dead,omitempty"`
+	// Worktree is the agent's dedicated git worktree path ("" = runs in the
+	// base tree: shell agents, non-git projects). When set, Dir == Worktree.
+	Worktree string `json:"worktree,omitempty"`
+	// Branch is the agent's worktree branch (mux/<codename>).
+	Branch string `json:"branch,omitempty"`
 }
 
 // RenameAgent sets Name for the agent with the given ID in the given project.

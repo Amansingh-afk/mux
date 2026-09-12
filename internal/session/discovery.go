@@ -39,6 +39,28 @@ const (
 	codexWalkDepth = 4
 )
 
+// BackfillUUID late-attributes a session uuid to an agent whose spawn-time
+// capture missed (e.g. codex nesting bug, or mux restarted mid-capture):
+// newest provider session for the cwd whose mtime is at/after the agent's
+// spawn time and not already claimed by another agent. Sessions are
+// newest-first, so the first too-old entry ends the search.
+func BackfillUUID(provider, dir string, spawnedAt int64, claimed map[string]bool) string {
+	metas, err := ListSessions(provider, dir)
+	if err != nil {
+		return ""
+	}
+	for _, sm := range metas {
+		if sm.ModTime.Unix() < spawnedAt-5 {
+			return ""
+		}
+		if claimed[sm.UUID] {
+			continue
+		}
+		return sm.UUID
+	}
+	return ""
+}
+
 // ListSessions returns provider-native sessions recorded for project dir,
 // newest first. Read-only; never writes provider files. Unknown providers and
 // missing session dirs yield (nil, nil), not an error.

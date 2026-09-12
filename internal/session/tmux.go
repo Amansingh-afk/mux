@@ -85,6 +85,10 @@ func sanitize(s string) string {
 type ResumeOpts struct {
 	Enabled bool
 	UUID    string
+	// Setup is a shell command run in the session's dir before the agent
+	// starts (worktree deps install). Runs visibly in the agent pane via a
+	// `sh -c 'setup && exec "$@"'` wrapper. "" = direct exec, no wrapper.
+	Setup string
 }
 
 func Spawn(id, dir string, p Provider, w, h int) error {
@@ -114,7 +118,15 @@ func SpawnWithResume(id, dir string, p Provider, w, h int, r ResumeOpts) error {
 		// new session starts with a clean native-signal slate.
 		ClearSpool(id)
 	}
-	args = append(args, buildSpawnArgv(p, r)...)
+	argv := buildSpawnArgv(p, r)
+	// worktree setup wrapper: run the configured setup command in the fresh
+	// worktree, visibly inside the agent's own pane, then exec the agent.
+	// `exec "$@"` keeps the agent's argv quoting intact and replaces the
+	// shell, so the tmux session IS the agent process once setup is done.
+	if r.Setup != "" && len(argv) > 0 {
+		argv = append([]string{"sh", "-c", r.Setup + ` && exec "$@"`, "sh"}, argv...)
+	}
+	args = append(args, argv...)
 	out, err := tmux(args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux spawn: %w: %s", err, out)
@@ -257,6 +269,59 @@ func List() ([]string, error) {
 // in the body preview if we captured it.
 //
 // Bounded by a 1s timeout so a dead tmux socket can't wedge the status tick.
+// RunTransient starts a detached session running shellCmd in dir. When the
+// command exits (pager quit, shell exit), the session explicitly switches the
+// viewing client back to returnTo before dying. NEVER rely on tmux's
+// detach-on-destroy hop here: "most recent session" can be mux's own UI
+// session, and a nested client attaching to it recursively clamps the whole
+// window to the pane's size (the 1x2 collapse). Used for diff views and
+// conflict shells. An existing session with the same id is replaced.
+func RunTransient(id, dir, shellCmd, returnTo string) error {
+	_ = tmux("kill-session", "-t", id).Run()
+	if returnTo != "" {
+		shellCmd = fmt.Sprintf("{ %s; }; tmux switch-client -t %q", shellCmd, returnTo)
+	}
+	out, err := tmux("new-session", "-d", "-s", id, "-c", dir, "sh", "-c", shellCmd).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux transient: %w: %s", err, out)
+	}
+	_ = tmux("set-option", "-t", id, "window-size", "manual").Run()
+	return nil
+}
+
+// CapturePlain captures the pane's content as plain text (no ANSI), including
+// the last `history` lines of scrollback. Used by yank — pasted prompts must
+// not carry escape sequences.
+func CapturePlain(id string, history int) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	args := []string{"capture-pane", "-p", "-t", id, "-S", fmt.Sprintf("-%d", history)}
+	var base []string
+	if sock := OuterSocket(); sock != "" {
+		base = []string{"-S", sock}
+	} else {
+		base = []string{"-L", socketName}
+	}
+	out, err := exec.CommandContext(ctx, "tmux", append(base, args...)...).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// PasteText bracketed-pastes text into the session's input. load-buffer +
+// paste-buffer -p keeps multi-line text as a single pasted block: TUIs that
+// support bracketed paste (claude/codex/gemini) receive it without treating
+// embedded newlines as submits. The buffer is deleted after the paste (-d).
+func PasteText(id, text string) error {
+	load := tmux("load-buffer", "-b", "muxyank", "-")
+	load.Stdin = strings.NewReader(text)
+	if err := load.Run(); err != nil {
+		return err
+	}
+	return tmux("paste-buffer", "-p", "-d", "-b", "muxyank", "-t", id).Run()
+}
+
 func Capture(id string, lines int) (string, error) {
 	_ = lines
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

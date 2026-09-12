@@ -38,37 +38,51 @@ func (m Model) handleSpawnAgent(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		provider := names[m.providerCur]
 		spec := session.Providers[provider]
 		if !spec.Available {
-			if spec.Hint != "" {
-				m.statusMsg = spec.Name + " not installed — " + spec.Hint
-			} else {
-				m.statusMsg = spec.Name + " not found in PATH"
-			}
 			return m, nil
 		}
 		id := pickSessionID(p, provider)
 		name := session.NewCodename(codenamesTaken(p))
 		w, h := m.bodyDims()
 		projectPath := p.Path
-		before := session.SnapshotFor(provider, projectPath)
+		// worktree-per-agent: every coding agent gets its own worktree +
+		// branch; the base tree stays the human's. Shells and non-git dirs
+		// run in the base.
+		dir := projectPath
+		var wt, branch, setup string
+		if provider != "shell" && session.IsGitRepo(projectPath) {
+			var werr error
+			wt, branch, werr = session.CreateWorktree(projectPath, name)
+			if werr != nil {
+				m.mode = modeNormal
+				return m, nil
+			}
+			dir = wt
+			_, _, _ = session.CopyWorktreeInclude(projectPath, wt)
+			setup = worktreeSetup
+		}
+		before := session.SnapshotFor(provider, dir)
 		var spawnErr error
-		session.WithSpawnLock(provider, projectPath, func() {
-			spawnErr = session.Spawn(id, projectPath, spec, w, h)
+		session.WithSpawnLock(provider, dir, func() {
+			spawnErr = session.SpawnWithResume(id, dir, spec, w, h, session.ResumeOpts{Setup: setup})
 		})
 		if spawnErr != nil {
-			m.statusMsg = "spawn failed: " + spawnErr.Error()
+			if wt != "" {
+				_ = session.RemoveWorktree(projectPath, wt, branch, true)
+			}
 			m.mode = modeNormal
 			return m, nil
 		}
 		m.store.AddAgent(p.Path, state.Agent{
 			ID: id, Name: name, Provider: provider,
 			SpawnedAt: time.Now().Unix(),
-			Dir:       projectPath,
+			Dir:       dir,
+			Worktree:  wt,
+			Branch:    branch,
 			LastSeen:  time.Now().Unix(),
 		})
 		m.aliveCache[id] = true
 		_ = m.store.Save()
 		m.mode = modeNormal
-		m.statusMsg = "spawned " + name
 		// move cursor to the just-spawned agent so auto-attach targets it.
 		snap := m.store.Snapshot()
 		for pi := range snap.Projects {
@@ -86,7 +100,7 @@ func (m Model) handleSpawnAgent(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		session.SetSizeManual(id)
 		visCmd := m.ensureAgentVisible(id)
 		_ = session.SelectPane(m.rightPane)
-		return m, tea.Batch(captureUUIDCmd(provider, projectPath, id, before), visCmd)
+		return m, tea.Batch(captureUUIDCmd(provider, dir, id, before), visCmd)
 	}
 	return m, nil
 }
@@ -116,7 +130,6 @@ func (m Model) handleRenameAgent(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.store.RenameAgent(p.Path, a.ID, name)
 			_ = m.store.Save()
-			m.statusMsg = "renamed → " + name
 		}
 		m.mode = modeNormal
 		return m, nil
@@ -128,7 +141,8 @@ func (m Model) handleRenameAgent(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		// use k.Runes so shift+letter (capitals) and other printable chars land
 		// intact. k.String() returns "shift+A" for capitals which len()==1 misses.
-		if len(k.Runes) > 0 {
+		// alt chords (global nav layer) carry runes too — don't type those.
+		if len(k.Runes) > 0 && !k.Alt {
 			for _, r := range k.Runes {
 				if r >= 0x20 && r != 0x7f {
 					m.renameBuf += string(r)
@@ -151,18 +165,22 @@ func (m *Model) killCurrentAgent() tea.Cmd {
 	wasVisible := m.rightPaneAgent == a.ID
 	dead := a.Dead || !m.aliveCache[a.ID]
 	if dead {
-		// already dead — second d forgets for real.
+		// already dead — second d forgets for real. Worktree goes with it;
+		// the branch survives unless it's fully merged (unmerged commits are
+		// never silently deleted).
+		if a.Worktree != "" {
+			merged := session.BranchMerged(p.Path, a.Branch)
+			_ = session.RemoveWorktree(p.Path, a.Worktree, a.Branch, merged)
+		}
 		m.store.RemoveAgent(p.Path, a.ID)
 		if m.sidebarCur > 0 {
 			m.sidebarCur--
 		}
-		m.statusMsg = "forgot " + a.Name
 	} else {
 		// soft-delete: kill tmux but keep state so enter can resume.
 		_ = session.Kill(a.ID)
 		m.store.MarkAgentDead(p.Path, a.ID)
 		delete(m.aliveCache, a.ID)
-		m.statusMsg = a.Name + " killed — enter to resume, d again to forget"
 	}
 	_ = m.store.Save()
 	// the right-pane attach to a killed session ends with tmux drawing a
@@ -177,14 +195,12 @@ func (m Model) attachCurrent() (tea.Model, tea.Cmd) {
 	a := m.currentAgent()
 	p := m.currentProject()
 	if a == nil {
-		m.statusMsg = "no agent to attach"
 		return m, nil
 	}
 	// dead agent → respawn with provider resume flag before showing it.
 	if a.Dead || !m.aliveCache[a.ID] {
 		spec, ok := session.Providers[a.Provider]
 		if !ok || !spec.Available {
-			m.statusMsg = a.Provider + " not available to resume"
 			return m, nil
 		}
 		w, h := m.bodyDims()
@@ -199,11 +215,9 @@ func (m Model) attachCurrent() (tea.Model, tea.Cmd) {
 				spawnErr = session.Spawn(a.ID, dir, spec, w, h)
 			})
 			if spawnErr != nil {
-				m.statusMsg = "respawn failed: " + spawnErr.Error()
 				return m, nil
 			}
 			m.aliveCache[a.ID] = true
-			m.statusMsg = "respawned " + a.Name + " in " + dir
 		} else {
 			before := session.SnapshotFor(a.Provider, dir)
 			uuid := a.SessionUUID
@@ -222,15 +236,9 @@ func (m Model) attachCurrent() (tea.Model, tea.Cmd) {
 				})
 			})
 			if spawnErr != nil {
-				m.statusMsg = "resume failed: " + spawnErr.Error()
 				return m, nil
 			}
 			m.aliveCache[a.ID] = true
-			hint := "resumed " + a.Name
-			if uuid == "" {
-				hint += " (provider picker)"
-			}
-			m.statusMsg = hint
 			if uuid == "" && p != nil {
 				captureCmd = captureUUIDCmd(a.Provider, dir, a.ID, before)
 			}
@@ -255,6 +263,42 @@ func captureUUIDCmd(provider, dir, agentID string, before session.Snapshot) tea.
 		uuid := session.CaptureUUIDForAgent(agentID, provider, dir, before, 10*time.Second)
 		return uuidCapturedMsg{projectPath: dir, agentID: agentID, uuid: uuid}
 	}
+}
+
+// yankCurrent grabs the selected agent's recent output (plain text, trailing
+// blanks trimmed) into the yank buffer for cross-agent handoff via p.
+func (m Model) yankCurrent() (tea.Model, tea.Cmd) {
+	a := m.currentAgent()
+	if a == nil || a.Dead || !m.aliveCache[a.ID] {
+		return m, nil
+	}
+	out, err := session.CapturePlain(a.ID, 200)
+	if err != nil {
+		return m, nil
+	}
+	out = strings.TrimRight(out, "\n \t")
+	if strings.TrimSpace(out) == "" {
+		return m, nil
+	}
+	m.yankBuf = out
+	m.yankFrom = a.Name
+	return m, nil
+}
+
+// pasteIntoCurrent bracketed-pastes the yank buffer into the selected agent's
+// input, prefixed with provenance so the receiving agent knows what it reads.
+// The paste lands in the input box unsubmitted — you review, then hit enter.
+func (m Model) pasteIntoCurrent() (tea.Model, tea.Cmd) {
+	if m.yankBuf == "" {
+		return m, nil
+	}
+	a := m.currentAgent()
+	if a == nil || a.Dead || !m.aliveCache[a.ID] {
+		return m, nil
+	}
+	text := fmt.Sprintf("[output from agent %q]\n%s", m.yankFrom, m.yankBuf)
+	_ = session.PasteText(a.ID, text)
+	return m, nil
 }
 
 // projectFragment derives the session-name fragment for a project from its

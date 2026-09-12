@@ -60,7 +60,6 @@ func listAdoptableCmd(projectPath string, known map[string]bool) tea.Cmd {
 func (m Model) startAdopt() (tea.Model, tea.Cmd) {
 	p := m.currentProject()
 	if p == nil {
-		m.statusMsg = "open a project first (o)"
 		return m, nil
 	}
 	known := map[string]bool{}
@@ -109,7 +108,6 @@ func (m Model) handleAdopt(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		})
 		_ = m.store.Save()
 		m.mode = modeNormal
-		m.statusMsg = "adopted " + name + " — enter to resume"
 		// move cursor onto the adopted agent so enter targets it.
 		snap := m.store.Snapshot()
 		for pi := range snap.Projects {
