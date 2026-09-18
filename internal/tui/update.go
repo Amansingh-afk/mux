@@ -111,9 +111,6 @@ func (m Model) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case mergeDoneMsg:
-		return m.handleMergeDone(msg)
-
 	case adoptListMsg:
 		// ignore a scan that raced a tab switch — it lists another project.
 		if m.mode == modeAdopt {
@@ -239,12 +236,6 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "p":
 		return m.pasteIntoCurrent()
-
-	case "alt+v":
-		return m.viewDiffCurrent()
-
-	case "alt+M":
-		return m.mergeCurrent()
 
 	case "alt+r":
 		a := m.currentAgent()

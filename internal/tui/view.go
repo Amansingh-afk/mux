@@ -279,8 +279,6 @@ func (m Model) renderHelp() string {
 		row("M-x", "kill agent (again to forget; enter to resume)"),
 		row("M-r", "rename selected agent"),
 		row("M-i", "adopt existing provider session"),
-		row("M-v", "review agent's diff vs base (q to close)"),
-		row("M-M", "merge agent's branch into base"),
 		row("M-z", "zen mode (zoom agent fullscreen, C-b z to exit)"),
 		sec("misc"),
 		row("y / p", "yank agent output / paste to agent (mux focused)"),

@@ -13,6 +13,12 @@ import (
 	"github.com/Amansingh-afk/mux/internal/state"
 )
 
+// worktreeSetup is the configured [worktree] setup command, run in every
+// fresh agent worktree before the agent starts. Set once at startup.
+var worktreeSetup string
+
+func SetWorktreeSetup(cmd string) { worktreeSetup = cmd }
+
 func (m Model) handleSpawnAgent(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	names := session.ProviderNames()
 	switch k.String() {

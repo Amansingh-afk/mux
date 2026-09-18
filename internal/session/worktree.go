@@ -15,11 +15,8 @@ import (
 )
 
 // gitTimeout bounds every git call so a hung object store / network remote
-// can't wedge the caller. MergeAgent's merge step gets mergeTimeout.
-const (
-	gitTimeout   = 30 * time.Second
-	mergeTimeout = 60 * time.Second
-)
+// can't wedge the caller.
+const gitTimeout = 30 * time.Second
 
 // gitOut runs `git -C dir args...` with a timeout and returns combined output.
 func gitOut(dir string, timeout time.Duration, args ...string) (string, error) {
@@ -123,20 +120,6 @@ func RemoveWorktree(repo, path, branch string, deleteBranch bool) error {
 func BranchMerged(repo, branch string) bool {
 	_, err := gitOut(repo, gitTimeout, "merge-base", "--is-ancestor", branch, "HEAD")
 	return err == nil
-}
-
-// BranchAhead reports whether branch has commits not reachable from the
-// repo's current HEAD (i.e. there is committed work to diff or merge).
-func BranchAhead(repo, branch string) bool {
-	out, err := gitOut(repo, gitTimeout, "rev-list", "-1", branch, "--not", "HEAD")
-	return err == nil && len(strings.TrimSpace(string(out))) > 0
-}
-
-// WorktreeDirty reports whether the worktree at wt has any uncommitted
-// changes (staged, unstaged, or untracked).
-func WorktreeDirty(wt string) bool {
-	out, err := gitOut(wt, gitTimeout, "status", "--porcelain")
-	return err == nil && strings.TrimSpace(out) != ""
 }
 
 // CopyWorktreeInclude copies gitignored files the agent still needs (.env,
@@ -295,78 +278,4 @@ func copyRel(repo, wt, rel string, seen map[string]bool, copied *[]string) error
 	seen[rel] = true
 	*copied = append(*copied, rel)
 	return nil
-}
-
-// MergeResult is the outcome of MergeAgent. Conflict is true when the merge
-// stopped on conflicts and is awaiting resolution (or abort) in the repo.
-// Out holds the tail of the combined git output for status display.
-type MergeResult struct {
-	Conflict bool
-	Err      error
-	Out      string
-}
-
-// MergeAgent merges an agent's branch into the base repo's current branch.
-// Uncommitted work in the agent worktree is first committed as
-// "mux: <codename> wip", then `git merge --no-ff --no-edit <branch>` runs in
-// the base repo. Conflict=true when the merge exited nonzero and MERGE_HEAD
-// exists (located via `git rev-parse --git-path`, since a worktree's .git is
-// a file, not a directory).
-func MergeAgent(repo, wt, branch string) MergeResult {
-	var combined strings.Builder
-	if WorktreeDirty(wt) {
-		codename := strings.TrimPrefix(branch, "mux/")
-		if out, err := gitOut(wt, gitTimeout, "add", "-A"); err != nil {
-			combined.WriteString(out)
-			return MergeResult{Err: fmt.Errorf("git add: %w", err), Out: tailStr(combined.String(), 400)}
-		}
-		out, err := gitOut(wt, gitTimeout, "commit", "-m", "mux: "+codename+" wip")
-		combined.WriteString(out)
-		if err != nil {
-			return MergeResult{Err: fmt.Errorf("git commit: %w", err), Out: tailStr(combined.String(), 400)}
-		}
-	}
-	out, err := gitOut(repo, mergeTimeout, "merge", "--no-ff", "--no-edit", branch)
-	combined.WriteString(out)
-	res := MergeResult{Out: tailStr(combined.String(), 400)}
-	if err != nil {
-		res.Err = fmt.Errorf("git merge %s: %w", branch, err)
-		if mergeHeadExists(repo) {
-			res.Conflict = true
-		}
-	}
-	return res
-}
-
-// mergeHeadExists reports whether the repo has a MERGE_HEAD (merge in
-// progress). rev-parse --git-path resolves the real location even when .git
-// is a worktree pointer file.
-func mergeHeadExists(repo string) bool {
-	out, err := gitOut(repo, gitTimeout, "rev-parse", "--git-path", "MERGE_HEAD")
-	if err != nil {
-		return false
-	}
-	p := strings.TrimSpace(out)
-	if p == "" {
-		return false
-	}
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(repo, p)
-	}
-	_, serr := os.Stat(p)
-	return serr == nil
-}
-
-// tailStr returns at most the last n bytes of s, trimmed to avoid starting
-// mid-line where possible.
-func tailStr(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= n {
-		return s
-	}
-	s = s[len(s)-n:]
-	if i := strings.IndexByte(s, '\n'); i >= 0 && i < len(s)-1 {
-		s = s[i+1:]
-	}
-	return s
 }

@@ -59,8 +59,6 @@ one keymap, everywhere: every chord below works identically whether keyboard foc
 | `M-x`           | kill agent (again to forget; enter to resume) |
 | `M-r`           | rename selected agent               |
 | `M-i`           | adopt an existing provider session  |
-| `M-v`           | review agent's diff vs base         |
-| `M-M`           | merge agent's branch into base      |
 | `M-z`           | zen mode (zoom agent fullscreen)    |
 
 ### misc — with mux focused
@@ -110,8 +108,16 @@ the tab strip shows `◐N` next to any project with N agents waiting on you — 
 
 every coding agent gets its own git worktree and branch (`mux/<codename>`), created from the base tree's HEAD at spawn. the base tree stays yours — agents never touch it. shells and non-git directories run in the base.
 
-- `M-v` — full-screen review pane, built into mux (no external pager needed): the agent's complete delta vs base, sectioned into committed / uncommitted / untracked, with a file strip, dual line-number gutters, and a **merge prediction** in the header — `merges clean ✓`, `⚠ will conflict: <files>` (via `git merge-tree`), or `⚠ merge blocked: untracked in base: <files>` — so you know how `M-M` will land before pressing it. `j`/`k` scroll, `n`/`N` jump files, `q` returns to the agent
-- `M-M` — merge the agent's branch into the base (uncommitted worktree changes get a wip commit first). clean merge → done. conflict → the right pane becomes [lazygit](https://github.com/jesseduffield/lazygit) in the base tree when installed (visual hunk-by-hunk resolution), your shell otherwise; `q`/exit returns to the agent. any other merge failure renders git's actual reason as a styled page in the same pane
+that's the whole feature. **review and merge are yours, with plain git** — mux adds no pager, no merge UI, no magic:
+
+```
+# worktrees live at ~/.local/share/mux/worktrees/<repo>-<hash>/<codename>
+git diff main...mux/nova        # review what agent "nova" did
+git merge mux/nova              # merge it into your base tree
+```
+
+or open [lazygit](https://github.com/jesseduffield/lazygit) / your editor in the worktree — it's a normal checkout on a normal branch. tell the agent to commit, rebase, or fix conflicts itself; conflicts stay in *its* worktree.
+
 - forgetting an agent (`M-x` `M-x`) removes its worktree; the branch is deleted only when fully merged — unmerged commits are never silently dropped
 - agent needs code that just landed on base? tell it: "merge main into your branch and fix conflicts" — conflicts stay in *its* worktree
 

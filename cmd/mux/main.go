@@ -4,12 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Amansingh-afk/mux/internal/config"
-	"github.com/Amansingh-afk/mux/internal/diffview"
 	"github.com/Amansingh-afk/mux/internal/session"
 	"github.com/Amansingh-afk/mux/internal/state"
 	"github.com/Amansingh-afk/mux/internal/tui"
@@ -26,22 +24,6 @@ func main() {
 			return
 		case "--notify-handler":
 			runNotifyHandler(os.Args[2:])
-			return
-		case "--diff":
-			// mux is its own diff pager: `mux --diff <base> <worktree> <branch>`
-			// runs full-screen in the transient right-pane session.
-			if len(os.Args) == 5 {
-				if err := diffview.Run(os.Args[2], os.Args[3], os.Args[4]); err != nil {
-					fmt.Fprintln(os.Stderr, "mux:", err)
-					os.Exit(1)
-				}
-			}
-			return
-		case "--notice":
-			// styled message page: `mux --notice <title> <body>`
-			if len(os.Args) >= 4 {
-				_ = diffview.RunNotice(os.Args[2], strings.Join(os.Args[3:], " "))
-			}
 			return
 		}
 	}
