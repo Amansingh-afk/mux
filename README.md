@@ -6,6 +6,8 @@ i built this because setting up tmux panes every time i wanted a few agents on a
 
 projects get tabs. agents get a sidebar. the selected agent runs in a real tmux pane. you can switch between claude, codex, gemini, cursor and a normal shell.
 
+![mux demo: switching projects, checking changes and opening a shell](docs/demo.gif)
+
 ## prerequisites
 
 - Linux or macOS with a terminal and a shell. on Windows, use WSL.
