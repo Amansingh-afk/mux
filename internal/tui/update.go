@@ -227,6 +227,16 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+x":
 		return m, m.killCurrentAgent()
 
+	case "alt+s":
+		// Same action as choosing shell in the provider picker.
+		for i, name := range session.ProviderNames() {
+			if name == "shell" {
+				m.providerCur = i
+				return m.handleSpawnAgent(tea.KeyMsg{Type: tea.KeyEnter})
+			}
+		}
+		return m, nil
+
 	case "alt+i":
 		m.focusForOverlay()
 		return m.startAdopt()
@@ -236,6 +246,21 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "p":
 		return m.pasteIntoCurrent()
+
+	case "c":
+		// copy the selected agent's worktree path — `cd` target for manual
+		// review/merge in the user's own terminal (tmux buffer + OSC52).
+		if a := m.currentAgent(); a != nil && a.Worktree != "" {
+			_ = session.SetClipboard(a.Worktree)
+		}
+		return m, nil
+
+	case "C":
+		// copy the branch name — `git merge <paste>` in the base tree.
+		if a := m.currentAgent(); a != nil && a.Branch != "" {
+			_ = session.SetClipboard(a.Branch)
+		}
+		return m, nil
 
 	case "alt+r":
 		a := m.currentAgent()

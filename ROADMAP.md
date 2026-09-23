@@ -70,7 +70,7 @@ differentiator.
 
 #### v0.2 — worktree mode (match the market)
 
-- `n` → pick provider → mux creates `.mux-worktrees/<codename>` as a git
+- `M-n` → pick provider → mux creates `.mux-worktrees/<codename>` as a git
   worktree off current HEAD with branch `mux/<codename>`. agent spawns
   there (cwd = worktree, not main repo).
 - sidebar row shows diff count vs base branch — `hanuman  claude  +42 -7`.

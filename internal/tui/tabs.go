@@ -22,7 +22,7 @@ func (m *Model) pushTabBar() {
 	snap := m.store.Snapshot()
 	var content string
 	if len(snap.OpenTabs) == 0 {
-		content = "#[fg=colour244] mux · press o to open a project "
+		content = "#[fg=colour244] mux · press M-o to open a project "
 	} else {
 		waiting := m.waitingByProject(snap)
 		var b strings.Builder

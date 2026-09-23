@@ -91,6 +91,19 @@ func (m Model) overlay(content string) string {
 	return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, content)
 }
 
+// truncPathLeft truncates a path from the left ("…share/mux/worktrees/nova")
+// so the distinguishing tail stays visible in the narrow sidebar.
+func truncPathLeft(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return "…"
+	}
+	return "…" + string(r[len(r)-n+1:])
+}
+
 func truncName(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -116,32 +129,36 @@ func providerBadge(name string, dim bool) string {
 	return st.Render(name)
 }
 
-// providerGlyphs are single-cell marks for the sidebar's right column — the
-// brand color carries the identity, the glyph just distinguishes at a glance.
-var providerGlyphs = map[string]string{
-	"claude": "✳",
-	"codex":  "⬡",
-	"gemini": "✦",
-	"cursor": "▮",
-	"shell":  "$",
+// providerTags are compact two-char marks for the sidebar's right column —
+// unambiguous where single glyphs read alike; the brand color reinforces.
+var providerTags = map[string]string{
+	"claude": "CL",
+	"codex":  "CX",
+	"gemini": "GM",
+	"cursor": "CU",
+	"shell":  "$_",
 }
 
-// providerIcon renders a provider's single-glyph mark in its brand color.
-// Unknown (config-added) providers fall back to their first letter.
+// providerIcon renders a provider's two-char tag in its brand color.
+// Unknown (config-added) providers fall back to their first two letters.
 func providerIcon(name string, dim bool) string {
-	g, ok := providerGlyphs[name]
+	tag, ok := providerTags[name]
 	if !ok {
-		g = "?"
-		for _, r := range name {
-			g = string(r)
-			break
+		r := []rune(strings.ToUpper(name))
+		switch {
+		case len(r) >= 2:
+			tag = string(r[:2])
+		case len(r) == 1:
+			tag = string(r) + " "
+		default:
+			tag = "??"
 		}
 	}
 	col := colorDim
 	if spec, ok := session.Providers[name]; ok && spec.Color != "" && !dim {
 		col = lipgloss.Color(spec.Color)
 	}
-	return lipgloss.NewStyle().Foreground(col).Render(g)
+	return lipgloss.NewStyle().Foreground(col).Bold(!dim).Render(tag)
 }
 
 func (m Model) renderSidebar(w, h int) string {
@@ -149,7 +166,7 @@ func (m Model) renderSidebar(w, h int) string {
 	if p == nil {
 		return styleSectionHeader.Render("NO PROJECT") + "\n" +
 			styleDivider.Render(strings.Repeat("─", min(w, 20))) + "\n\n" +
-			lipgloss.NewStyle().Foreground(colorDim).Render("press o to open")
+			lipgloss.NewStyle().Foreground(colorDim).Render("press M-o to open")
 	}
 
 	header := styleSectionHeader.Render("AGENTS")
@@ -158,7 +175,7 @@ func (m Model) renderSidebar(w, h int) string {
 	var agentRows []string
 	if len(p.Agents) == 0 {
 		agentRows = []string{
-			lipgloss.NewStyle().Foreground(colorDim).Italic(true).Render("  press n to spawn"),
+			lipgloss.NewStyle().Foreground(colorDim).Italic(true).Render("  press M-n to spawn"),
 		}
 	} else {
 		agentRows = make([]string, 0, len(p.Agents))
@@ -192,7 +209,7 @@ func (m Model) renderSidebar(w, h int) string {
 			if tok := m.statusRec[a.ID].tokens; tok > 0 && !dead {
 				right = lipgloss.NewStyle().Foreground(colorDim).Render(session.FormatTokens(tok)) + " " + pIcon
 			}
-			nameW := w - 6 - 5 // marker 2 + status 1 + gaps 2 + icon 1, meter ≤5
+			nameW := w - 7 - 5 // marker 2 + status 1 + gaps 2 + tag 2, meter ≤5
 			if nameW < 4 {
 				nameW = 4
 			}
@@ -205,9 +222,20 @@ func (m Model) renderSidebar(w, h int) string {
 		}
 	}
 
-	// viewport windowing (reserve: 3 for agents header block + 4 for project footer)
-	headerBlock := 3 // HEADER, divider, blank
-	footerBlock := 5 // blank, PROJECT header, divider, name, path
+	// selected agent's branch + worktree path render under the project block —
+	// the manual-merge coordinates (`git merge <branch>`, `cd <worktree>`)
+	// visible without hunting. c / C copy them.
+	var wtLines []string
+	if a := m.currentAgent(); a != nil && a.Branch != "" {
+		wtLines = append(wtLines,
+			clipLine(lipgloss.NewStyle().Foreground(colorAccent).Render(a.Branch), w),
+			clipLine(lipgloss.NewStyle().Foreground(colorDim).Render(truncPathLeft(displayPath(a.Worktree), w)), w),
+		)
+	}
+
+	// viewport windowing (reserve: 3 for agents header block + rest for footer)
+	headerBlock := 3                // HEADER, divider, blank
+	footerBlock := 5 + len(wtLines) // blank, PROJECT header, divider, name, path [, branch, worktree]
 	available := h - headerBlock - footerBlock
 	if available < 1 {
 		available = h - headerBlock
@@ -246,6 +274,7 @@ func (m Model) renderSidebar(w, h int) string {
 		out = append(out, clipLine(divider, w))
 		out = append(out, clipLine(projectName, w))
 		out = append(out, clipLine(projectPath, w))
+		out = append(out, wtLines...)
 	}
 
 	return strings.Join(out, "\n")
@@ -279,8 +308,10 @@ func (m Model) renderHelp() string {
 		row("M-x", "kill agent (again to forget; enter to resume)"),
 		row("M-r", "rename selected agent"),
 		row("M-i", "adopt existing provider session"),
+		row("M-s", "spawn shell in current project"),
 		row("M-z", "zen mode (zoom agent fullscreen, C-b z to exit)"),
 		sec("misc"),
+		row("c / C", "copy worktree path / branch name (mux focused)"),
 		row("y / p", "yank agent output / paste to agent (mux focused)"),
 		row("?", "toggle this help (mux focused)"),
 		row("M-q", "quit (q / C-c with mux focused)"),

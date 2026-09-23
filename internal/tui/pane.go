@@ -99,6 +99,13 @@ func (m *Model) ensureAgentVisible(agentID string) tea.Cmd {
 		if m.rightClient != "" {
 			if err := session.SwitchClient(m.rightClient, agentID); err == nil {
 				m.rightPaneAgent = agentID
+				// zoom (M-z / C-b z) changes the pane's dims without mux
+				// getting a WindowSizeMsg — its own pane is hidden while
+				// zoomed — so the pre-warm can be stale. Re-check here;
+				// Resize is dedup-cached, so this is free when dims match.
+				if w, h, derr := session.PaneDims(m.rightPane); derr == nil {
+					_ = session.Resize(agentID, w, h)
+				}
 				return nil
 			}
 			m.rightClient = "" // client name stale → fall through

@@ -309,6 +309,15 @@ func CapturePlain(id string, history int) (string, error) {
 	return string(out), nil
 }
 
+// SetClipboard puts text into tmux's paste buffer and — via OSC52 (-w) —
+// the attached terminal's system clipboard, so it's pasteable outside tmux
+// too (manual merges happen in the user's own terminal).
+func SetClipboard(text string) error {
+	load := tmux("load-buffer", "-w", "-")
+	load.Stdin = strings.NewReader(text)
+	return load.Run()
+}
+
 // PasteText bracketed-pastes text into the session's input. load-buffer +
 // paste-buffer -p keeps multi-line text as a single pasted block: TUIs that
 // support bracketed paste (claude/codex/gemini) receive it without treating

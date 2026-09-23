@@ -14,7 +14,7 @@ import (
 //	M-j / M-k / M-Down / M-Up      next / prev agent
 //	M-h / M-l / M-Left / M-Right   prev / next tab
 //	M-1 .. M-9                     jump project tab
-//	M-n M-x M-r M-i M-z            agent actions
+//	M-n M-x M-r M-i M-z M-s        agent actions
 //	M-o M-w M-W                    project actions
 //	M-q                            quit
 //	M-Space                        toggle focus between mux and agent pane
@@ -40,7 +40,7 @@ var forwardKeys = []string{
 	"M-h", "M-l", "M-Left", "M-Right",
 	"M-1", "M-2", "M-3", "M-4", "M-5",
 	"M-6", "M-7", "M-8", "M-9",
-	"M-n", "M-x", "M-r", "M-i", "M-z",
+	"M-n", "M-x", "M-r", "M-i", "M-z", "M-s",
 	"M-o", "M-w", "M-W",
 	"M-q",
 }
