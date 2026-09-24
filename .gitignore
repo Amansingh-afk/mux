@@ -1,1 +1,3 @@
-mux
+# built binary at repo root only — a bare "mux" would ignore cmd/mux/* too
+/mux
+.claude/
