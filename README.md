@@ -6,7 +6,9 @@ i built this because setting up tmux panes every time i wanted a few agents on a
 
 projects get tabs. agents get a sidebar. the selected agent runs in a real tmux pane. you can switch between claude, codex, gemini, cursor and a normal shell.
 
-![mux demo: switching projects, checking changes and opening a shell](docs/demo.gif)
+[![mux demo: Codex, Claude and lazygit in one terminal](docs/demo.gif)](docs/demo.gif)
+
+[watch the full-size video](docs/demo.webm)
 
 ## prerequisites
 
