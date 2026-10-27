@@ -9,8 +9,10 @@ import "strings"
 var savedBorder = struct {
 	captured              bool
 	style, active, lines  string
+	indicators            string
 	haveStyle, haveActive bool
 	haveLines             bool
+	haveIndicators        bool
 }{}
 
 func captureOptW(name string) (string, bool) {
@@ -31,6 +33,7 @@ func CapturePaneBorder() {
 	savedBorder.style, savedBorder.haveStyle = captureOptW("pane-border-style")
 	savedBorder.active, savedBorder.haveActive = captureOptW("pane-active-border-style")
 	savedBorder.lines, savedBorder.haveLines = captureOptW("pane-border-lines")
+	savedBorder.indicators, savedBorder.haveIndicators = captureOptW("pane-border-indicators")
 	savedBorder.captured = true
 }
 
@@ -43,6 +46,9 @@ func SetPaneBorder() {
 	_ = tmux("set-option", "-w", "pane-border-style", "fg=colour236").Run()
 	_ = tmux("set-option", "-w", "pane-active-border-style", "fg=colour205").Run()
 	_ = tmux("set-option", "-w", "pane-border-lines", "heavy").Run()
+	// tmux's default "colour" indicator paints only half the split when the
+	// window has exactly two panes, which reads as a broken border.
+	_ = tmux("set-option", "-w", "pane-border-indicators", "off").Run()
 }
 
 // RestorePaneBorder reverts the border options to their startup values,
@@ -61,4 +67,5 @@ func RestorePaneBorder() {
 	restore("pane-border-style", savedBorder.style, savedBorder.haveStyle)
 	restore("pane-active-border-style", savedBorder.active, savedBorder.haveActive)
 	restore("pane-border-lines", savedBorder.lines, savedBorder.haveLines)
+	restore("pane-border-indicators", savedBorder.indicators, savedBorder.haveIndicators)
 }
