@@ -45,6 +45,9 @@ func nudgeAgentCmd(pane, agentID string) tea.Cmd {
 	}
 }
 
+// muxCols is the width mux's own (sidebar) pane keeps beside the agent pane.
+const muxCols = 24
+
 // resizeAllSessions sizes every alive agent's tmux session to match the
 // right (agent) pane. Pre-warming avoids the swap-flicker: when SwitchClient
 // pulls a session into the client view, its backing grid is already at the
@@ -127,7 +130,6 @@ func (m *Model) ensureAgentVisible(agentID string) tea.Cmd {
 	// muxCols, +1 col for the border) so the attach shows a correctly sized
 	// render immediately. The repaint happens before the pane exists, so it
 	// is invisible — this is what kills the startup flicker.
-	const muxCols = 24
 	preW, preH := -1, -1
 	if w, h, err := session.PaneDims(session.OuterPane()); err == nil && w > muxCols+10 {
 		preW, preH = w-muxCols-1, h

@@ -53,6 +53,11 @@ func (m Model) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			reveal := tea.Tick(700*time.Millisecond, func(time.Time) tea.Msg { return bootRevealMsg{} })
 			return m, tea.Batch(m.resizeAllSessions(), reveal)
 		}
+		// outer terminal resized: tmux split the change across both panes,
+		// so pull mux back to muxCols before sizing agents to the right pane.
+		if m.rightPane != "" && m.w != muxCols {
+			session.PinPaneWidth(session.OuterPane(), muxCols)
+		}
 		return m, m.resizeAllSessions()
 
 	case bootRevealMsg:

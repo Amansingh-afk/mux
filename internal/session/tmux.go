@@ -468,6 +468,25 @@ func SetPaneZoom(pane string, want bool) {
 	_ = tmux("resize-pane", "-Z", "-t", pane).Run()
 }
 
+// PinPaneWidth resizes pane back to cols wide. tmux spreads window growth
+// across both panes, so after the terminal shrinks and grows back the mux
+// pane comes out wider than it started. Skipped while the window is zoomed:
+// resize-pane would unzoom it.
+func PinPaneWidth(pane string, cols int) {
+	if pane == "" {
+		return
+	}
+	out, err := tmux("display-message", "-p", "-t", pane, "#{pane_width} #{window_zoomed_flag}").Output()
+	if err != nil {
+		return
+	}
+	f := strings.Fields(string(out))
+	if len(f) < 2 || f[1] == "1" || f[0] == strconv.Itoa(cols) {
+		return
+	}
+	_ = tmux("resize-pane", "-t", pane, "-x", strconv.Itoa(cols)).Run()
+}
+
 // ZoomPane toggles tmux's zoom on the given pane. Selects the pane first
 // so resize-pane -Z (which acts on the active pane) targets the right one.
 func ZoomPane(pane string) error {
