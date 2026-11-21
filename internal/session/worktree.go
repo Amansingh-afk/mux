@@ -122,6 +122,38 @@ func BranchMerged(repo, branch string) bool {
 	return err == nil
 }
 
+// DiffStat returns lines added/removed in worktree wt since it forked from
+// repo's HEAD: committed and uncommitted changes together, measured from
+// their merge-base so the agent's commits still count. Untracked files are
+// not included.
+func DiffStat(repo, wt string) (ins, del int, err error) {
+	base, err := gitOut(repo, gitTimeout, "rev-parse", "HEAD")
+	if err != nil {
+		return 0, 0, err
+	}
+	mb, err := gitOut(wt, gitTimeout, "merge-base", strings.TrimSpace(base), "HEAD")
+	if err != nil {
+		return 0, 0, err
+	}
+	out, err := gitOut(wt, gitTimeout, "diff", "--numstat", strings.TrimSpace(mb))
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		// binary files report "-" for both counts; Sscan leaves them 0.
+		var a, d int
+		_, _ = fmt.Sscan(f[0], &a)
+		_, _ = fmt.Sscan(f[1], &d)
+		ins += a
+		del += d
+	}
+	return ins, del, nil
+}
+
 // CopyWorktreeInclude copies gitignored files the agent still needs (.env,
 // local config, secrets) from the base repo into a fresh worktree, driven by
 // <repo>/.worktreeinclude. A missing file is a no-op.

@@ -36,6 +36,9 @@ type Model struct {
 	adoptLoading bool
 	aliveCache   map[string]bool
 	statusRec    map[string]agentStatusRec
+	// diffStats caches each worktree agent's +/- line counts for the
+	// sidebar detail line; refreshed for the selected agent on tick.
+	diffStats    map[string][2]int
 	spinnerFrame int
 	// booted flips on the first WindowSizeMsg — the earliest point with real
 	// dimensions, where the right pane for the restored agent is first shown.
@@ -77,6 +80,12 @@ type agentStatusRec struct {
 }
 
 type tickMsg time.Time
+
+// diffStatMsg carries a fresh DiffStat for one agent's worktree.
+type diffStatMsg struct {
+	id       string
+	ins, del int
+}
 type spinTickMsg time.Time
 
 // bootRevealMsg ends the boot splash: the right pane is split in and the
@@ -117,6 +126,7 @@ func New(s *state.Store, alive map[string]bool) Model {
 		store:      s,
 		aliveCache: alive,
 		statusRec:  map[string]agentStatusRec{},
+		diffStats:  map[string][2]int{},
 	}
 	snap := s.Snapshot()
 	if snap.ActiveTab != "" {

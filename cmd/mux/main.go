@@ -81,12 +81,15 @@ func main() {
 	session.SetTopBarLayout()
 	session.CapturePaneBorder()
 	session.SetPaneBorder()
+	session.CaptureClipboard()
+	session.SetClipboardOn()
 	if cfg.QuickNav {
 		session.InstallQuickNav(session.OuterPane())
 	}
 	cleanup := func() {
 		session.RestoreTabBar()
 		session.RestorePaneBorder()
+		session.RestoreClipboard()
 		if cfg.QuickNav {
 			session.RemoveQuickNav()
 		}

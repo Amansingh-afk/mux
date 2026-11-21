@@ -26,9 +26,6 @@ var (
 				Foreground(colorDim).
 				Bold(true)
 
-	styleDivider = lipgloss.NewStyle().
-			Foreground(colorFaint)
-
 	styleListItemSel = lipgloss.NewStyle().
 				Foreground(colorAccent).
 				Bold(true)

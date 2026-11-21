@@ -45,6 +45,23 @@ func nudgeAgentCmd(pane, agentID string) tea.Cmd {
 	}
 }
 
+// refreshDiffStat measures the selected agent's worktree changes off the
+// update loop. Only the selected agent: it's the only one the sidebar shows.
+func (m Model) refreshDiffStat() tea.Cmd {
+	a, p := m.currentAgent(), m.currentProject()
+	if a == nil || p == nil || a.Worktree == "" {
+		return nil
+	}
+	id, repo, wt := a.ID, p.Path, a.Worktree
+	return func() tea.Msg {
+		ins, del, err := session.DiffStat(repo, wt)
+		if err != nil {
+			return nil
+		}
+		return diffStatMsg{id: id, ins: ins, del: del}
+	}
+}
+
 // muxCols is the width mux's own (sidebar) pane keeps beside the agent pane.
 const muxCols = 24
 

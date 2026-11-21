@@ -108,7 +108,7 @@ Alt shortcuts work from the sidebar and inside agent panes. mux saves existing t
 | key | action |
 | --- | --- |
 | `M-n` | choose a provider and spawn an agent |
-| `M-s` | spawn a shell in the current project |
+| `M-s` | show / hide a popup shell in the agent's worktree |
 | `M-j` / `M-k` | next / previous agent |
 | `M-Down` / `M-Up` | next / previous agent |
 | `enter` | attach or resume, with mux focused |
@@ -121,11 +121,14 @@ Alt shortcuts work from the sidebar and inside agent panes. mux saves existing t
 
 with the default tmux prefix, `C-b z` also exits fullscreen.
 
+the popup shell starts in the selected agent's worktree, so files the agent mentions are right there. hiding it keeps the shell running. for a shell in the sidebar instead, pick `shell` from `M-n`.
+
 ### with mux focused
 
 | key | action |
 | --- | --- |
 | `c` / `C` | copy worktree path / branch name |
+| `f` | open the agent's worktree in your file manager |
 | `y` / `p` | grab agent output / paste it into another agent's prompt |
 | `?` | help |
 | `q` / `C-c` | quit |

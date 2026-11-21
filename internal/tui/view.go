@@ -66,11 +66,10 @@ func (m Model) renderBootSplash() string {
 		"█▀▄▀█ █░█ ▀▄▀",
 		"█░▀░█ █▄█ █░█",
 	}
-	art := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).
-		Render(strings.Join(wordmark, "\n"))
+	art := gradient(strings.Join(wordmark, "\n"), true)
 	frame := session.SpinnerFrames[m.spinnerFrame%len(session.SpinnerFrames)]
-	sub := lipgloss.NewStyle().Foreground(colorDim).
-		Render(frame + " waking agents")
+	sub := lipgloss.NewStyle().Foreground(colorAccent).Render(frame) +
+		lipgloss.NewStyle().Foreground(colorDim).Render(" waking agents")
 	return m.overlay(lipgloss.JoinVertical(lipgloss.Center, art, "", sub))
 }
 
@@ -165,12 +164,12 @@ func (m Model) renderSidebar(w, h int) string {
 	p := m.currentProject()
 	if p == nil {
 		return styleSectionHeader.Render("NO PROJECT") + "\n" +
-			styleDivider.Render(strings.Repeat("─", min(w, 20))) + "\n\n" +
+			gradientRule(min(w, 20)) + "\n\n" +
 			lipgloss.NewStyle().Foreground(colorDim).Render("press M-o to open")
 	}
 
 	header := styleSectionHeader.Render("AGENTS")
-	divider := styleDivider.Render(strings.Repeat("─", min(w, 20)))
+	divider := gradientRule(min(w, 20))
 
 	var agentRows []string
 	if len(p.Agents) == 0 {
@@ -196,7 +195,7 @@ func (m Model) renderSidebar(w, h int) string {
 				labelStyle = labelStyle.Foreground(colorDim).Strikethrough(true)
 			}
 			if i == m.sidebarCur {
-				marker = styleSelMarker.Render("▸ ")
+				marker = styleSelMarker.Render("▌ ")
 				labelStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 				if dead {
 					labelStyle = lipgloss.NewStyle().Foreground(colorDim).Bold(true).Strikethrough(true)
@@ -222,13 +221,22 @@ func (m Model) renderSidebar(w, h int) string {
 		}
 	}
 
-	// selected agent's branch + worktree path render under the project block —
-	// the manual-merge coordinates (`git merge <branch>`, `cd <worktree>`)
-	// visible without hunting. c / C copy them.
+	// selected agent's branch, change summary and worktree path render under
+	// the project block — the manual-merge coordinates (`git merge <branch>`,
+	// `cd <worktree>`) visible without hunting. c / C copy them.
 	var wtLines []string
 	if a := m.currentAgent(); a != nil && a.Branch != "" {
+		detail := lipgloss.NewStyle().Foreground(colorDim).Render("…")
+		if ds, ok := m.diffStats[a.ID]; ok {
+			detail = diffStatLine(ds[0], ds[1])
+		}
+		if age := shortAge(a.SpawnedAt); age != "" {
+			detail += lipgloss.NewStyle().Foreground(colorFaint).Render(" · ") +
+				lipgloss.NewStyle().Foreground(colorDim).Render("up "+age)
+		}
 		wtLines = append(wtLines,
-			clipLine(lipgloss.NewStyle().Foreground(colorAccent).Render(a.Branch), w),
+			clipLine(lipgloss.NewStyle().Foreground(colorAccent).Render("⎇ "+a.Branch), w),
+			clipLine(detail, w),
 			clipLine(lipgloss.NewStyle().Foreground(colorDim).Render(truncPathLeft(displayPath(a.Worktree), w)), w),
 		)
 	}
@@ -308,10 +316,11 @@ func (m Model) renderHelp() string {
 		row("M-x", "kill agent (again to forget; enter to resume)"),
 		row("M-r", "rename selected agent"),
 		row("M-i", "adopt existing provider session"),
-		row("M-s", "spawn shell in current project"),
+		row("M-s", "toggle shell in agent's worktree (popup)"),
 		row("M-z", "zen mode (zoom agent fullscreen, C-b z to exit)"),
 		sec("misc"),
 		row("c / C", "copy worktree path / branch name (mux focused)"),
+		row("f", "open worktree in file manager (mux focused)"),
 		row("y / p", "yank agent output / paste to agent (mux focused)"),
 		row("?", "toggle this help (mux focused)"),
 		row("M-q", "quit (q / C-c with mux focused)"),

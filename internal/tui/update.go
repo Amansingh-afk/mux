@@ -72,7 +72,11 @@ func (m Model) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.swapToCurrentAgent()
 
 	case tickMsg:
-		return m, tea.Batch(tick(), refreshAlive(), m.captureAllForStatus(), m.backfillUUIDs())
+		return m, tea.Batch(tick(), refreshAlive(), m.captureAllForStatus(), m.backfillUUIDs(), m.refreshDiffStat())
+
+	case diffStatMsg:
+		m.diffStats[msg.id] = [2]int{msg.ins, msg.del}
+		return m, nil
 
 	case spinTickMsg:
 		m.spinnerFrame++
@@ -233,12 +237,18 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.killCurrentAgent()
 
 	case "alt+s":
-		// Same action as choosing shell in the provider picker.
-		for i, name := range session.ProviderNames() {
-			if name == "shell" {
-				m.providerCur = i
-				return m.handleSpawnAgent(tea.KeyMsg{Type: tea.KeyEnter})
-			}
+		// floating shell in the selected agent's worktree; again to hide.
+		// A standalone shell agent is still in the M-n picker.
+		if key, dir, title := m.shellTarget(); dir != "" {
+			_ = session.ToggleShellPopup(key, dir, title)
+		}
+		return m, nil
+
+	case "f":
+		// open the selected agent's worktree (or the project) in the file
+		// manager — for images and renders the agent points at.
+		if _, dir, _ := m.shellTarget(); dir != "" {
+			_ = session.OpenDir(dir)
 		}
 		return m, nil
 

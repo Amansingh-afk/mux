@@ -179,12 +179,14 @@ func (m *Model) killCurrentAgent() tea.Cmd {
 			_ = session.RemoveWorktree(p.Path, a.Worktree, a.Branch, merged)
 		}
 		m.store.RemoveAgent(p.Path, a.ID)
+		session.KillShell(a.ID)
 		if m.sidebarCur > 0 {
 			m.sidebarCur--
 		}
 	} else {
 		// soft-delete: kill tmux but keep state so enter can resume.
 		_ = session.Kill(a.ID)
+		session.KillShell(a.ID)
 		m.store.MarkAgentDead(p.Path, a.ID)
 		delete(m.aliveCache, a.ID)
 	}
@@ -313,6 +315,32 @@ func (m Model) pasteIntoCurrent() (tea.Model, tea.Cmd) {
 // session ids readable; a short FNV-32a hash of the full path (4 hex chars)
 // makes them distinct. session.SessionID sanitizes the fragment, matching
 // prior behavior.
+// shellTarget picks where M-s and f point: the selected agent's directory
+// (its worktree when it has one), else the current project. key names the
+// popup shell session; title labels its border. dir is "" when there is no
+// project open.
+func (m Model) shellTarget() (key, dir, title string) {
+	p := m.currentProject()
+	if p == nil {
+		return "", "", ""
+	}
+	if a := m.currentAgent(); a != nil {
+		dir = a.Worktree
+		if dir == "" {
+			dir = a.Dir
+		}
+		if dir == "" {
+			dir = p.Path
+		}
+		title = "shell · " + a.Name
+		if a.Branch != "" {
+			title += " · " + a.Branch
+		}
+		return a.ID, dir, title
+	}
+	return projectFragment(p.Path), p.Path, "shell · " + filepath.Base(p.Path)
+}
+
 func projectFragment(path string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(path))

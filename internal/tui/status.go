@@ -191,7 +191,13 @@ func (m Model) statusIcon(id string) string {
 		frame := session.SpinnerFrames[m.spinnerFrame%len(session.SpinnerFrames)]
 		return lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(frame)
 	case session.StatusWaiting:
-		return lipgloss.NewStyle().Foreground(colorWarn).Render("◐")
+		// slow pulse (~1s period on the 120ms spin tick) so an agent
+		// waiting on you catches the eye without a full spinner.
+		col := colorWarn
+		if (m.spinnerFrame/4)%2 == 1 {
+			col = lipgloss.Color("136")
+		}
+		return lipgloss.NewStyle().Foreground(col).Render("◐")
 	case session.StatusIdle:
 		return lipgloss.NewStyle().Foreground(colorDim).Render("○")
 	}
