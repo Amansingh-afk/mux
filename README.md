@@ -108,6 +108,8 @@ Alt shortcuts work from the sidebar and inside agent panes. mux saves existing t
 | key | action |
 | --- | --- |
 | `M-n` | choose a provider and spawn an agent |
+| `M-a` | all agents in every project, the ones that need you first |
+| `M-v` | review the agent's changes: merge, discard or send back a note |
 | `M-s` | show / hide a popup shell in the agent's worktree |
 | `M-j` / `M-k` | next / previous agent |
 | `M-Down` / `M-Up` | next / previous agent |
@@ -120,6 +122,10 @@ Alt shortcuts work from the sidebar and inside agent panes. mux saves existing t
 | `M-q` | quit mux |
 
 with the default tmux prefix, `C-b z` also exits fullscreen.
+
+merging commits the agent's uncommitted work and merges it into the branch checked out in your main repo. it refuses if that repo has uncommitted changes or the agent changed something after you opened the review, and backs out of conflicts.
+
+`✓` marks an agent that finished while you were looking elsewhere. mux asks before deleting a worktree that still has uncommitted or ignored files.
 
 the popup shell starts in the selected agent's worktree, so files the agent mentions are right there. hiding it keeps the shell running. for a shell in the sidebar instead, pick `shell` from `M-n`.
 

@@ -30,7 +30,7 @@ func ToggleShellPopup(key, dir, title string) error {
 	}
 	sess := ShellSessionID(key)
 	if Exists(sess) && FindClientForSession(sess) != "" {
-		return tmux("detach-client", "-s", sess).Run()
+		return tmux("detach-client", "-s", exact(sess)).Run()
 	}
 	if !Exists(sess) {
 		if out, err := tmux("new-session", "-d", "-s", sess, "-c", dir).CombinedOutput(); err != nil {
@@ -57,7 +57,7 @@ func ToggleShellPopup(key, dir, title string) error {
 func KillShell(key string) {
 	sess := ShellSessionID(key)
 	if Exists(sess) {
-		_ = tmux("kill-session", "-t", sess).Run()
+		_ = tmux("kill-session", "-t", exact(sess)).Run()
 	}
 }
 

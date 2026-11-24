@@ -123,19 +123,18 @@ func BranchMerged(repo, branch string) bool {
 }
 
 // DiffStat returns lines added/removed in worktree wt since it forked from
-// repo's HEAD: committed and uncommitted changes together, measured from
-// their merge-base so the agent's commits still count. Untracked files are
-// not included.
+// repo's HEAD: commits, uncommitted edits and untracked text files together,
+// measured from the merge-base so the agent's commits still count.
 func DiffStat(repo, wt string) (ins, del int, err error) {
-	base, err := gitOut(repo, gitTimeout, "rev-parse", "HEAD")
+	base, err := gitLine(repo, "rev-parse", "HEAD")
 	if err != nil {
 		return 0, 0, err
 	}
-	mb, err := gitOut(wt, gitTimeout, "merge-base", strings.TrimSpace(base), "HEAD")
+	mb, err := gitLine(wt, "merge-base", base, "HEAD")
 	if err != nil {
 		return 0, 0, err
 	}
-	out, err := gitOut(wt, gitTimeout, "diff", "--numstat", strings.TrimSpace(mb))
+	out, err := gitRun(wt, gitTimeout, "diff", "--numstat", "--no-ext-diff", "--no-textconv", mb)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -150,6 +149,18 @@ func DiffStat(repo, wt string) (ins, del int, err error) {
 		_, _ = fmt.Sscan(f[1], &d)
 		ins += a
 		del += d
+	}
+	files, err := untracked(wt)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(files) > maxUntrackedRead {
+		files = files[:maxUntrackedRead]
+	}
+	for _, f := range files {
+		if text, ok := readUntracked(filepath.Join(wt, f)); ok {
+			ins += lineCount(text)
+		}
 	}
 	return ins, del, nil
 }

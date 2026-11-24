@@ -55,6 +55,15 @@ func (m Model) View() string {
 	if m.mode == modeAdopt {
 		return m.overlay(m.renderAdoptPicker())
 	}
+	if m.mode == modeReview {
+		return m.renderReview()
+	}
+	if m.mode == modeInbox {
+		return m.overlay(m.renderInbox())
+	}
+	if m.mode == modeConfirm {
+		return m.overlay(m.renderConfirm())
+	}
 	return view
 }
 
@@ -289,49 +298,87 @@ func (m Model) renderSidebar(w, h int) string {
 }
 
 func (m Model) renderHelp() string {
-	title := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("mux — keybindings")
+	const colW = 54
+	dim := lipgloss.NewStyle().Foreground(colorDim)
+	// two columns when they fit; otherwise one, without spacing if short.
+	wide := m.w >= 2*colW+8
+	compact := !wide && m.h < 47
 	sec := func(h string) string {
-		return lipgloss.NewStyle().Bold(true).Foreground(colorAccent).MarginTop(1).Render(h)
+		st := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+		if !compact {
+			st = st.MarginTop(1)
+		}
+		return st.Render(h)
 	}
-	key := lipgloss.NewStyle().Foreground(colorAccent).Width(14)
-	desc := lipgloss.NewStyle().Foreground(colorDim)
+	key := lipgloss.NewStyle().Foreground(colorAccent).Width(13)
 	row := func(k, d string) string {
-		return key.Render(k) + desc.Render(d)
+		return clipLine(key.Render(k)+dim.Render(d), colW-2)
+	}
+	icon := func(i string, c lipgloss.Color, d string) string {
+		return lipgloss.NewStyle().Foreground(c).Width(13).Render(i) + dim.Render(d)
 	}
 
-	lines := []string{
-		title,
-		lipgloss.NewStyle().Foreground(colorDim).Render("alt chords work anywhere — even while typing in an agent"),
+	left := []string{
 		sec("projects"),
 		row("M-o", "open project (fuzzy picker)"),
 		row("M-h / M-l", "prev / next tab (also M-←/→)"),
 		row("M-1 – M-9", "jump to tab N"),
 		row("M-w", "close tab (agents survive)"),
-		row("M-W", "close tab + kill all agents"),
+		row("M-W", "close tab + delete its agents"),
 		sec("agents"),
+		row("M-a", "all agents in every project"),
 		row("M-j / M-k", "next / prev agent (also M-↓/↑)"),
 		row("M-n", "spawn agent in current project"),
 		row("enter", "attach / resume selected agent"),
 		row("M-space", "toggle focus mux ↔ agent"),
-		row("M-x", "kill agent (again to forget; enter to resume)"),
+		row("M-x", "kill agent; again to delete it"),
 		row("M-r", "rename selected agent"),
 		row("M-i", "adopt existing provider session"),
-		row("M-s", "toggle shell in agent's worktree (popup)"),
-		row("M-z", "zen mode (zoom agent fullscreen, C-b z to exit)"),
-		sec("misc"),
-		row("c / C", "copy worktree path / branch name (mux focused)"),
-		row("f", "open worktree in file manager (mux focused)"),
-		row("y / p", "yank agent output / paste to agent (mux focused)"),
-		row("?", "toggle this help (mux focused)"),
-		row("M-q", "quit (q / C-c with mux focused)"),
-		"",
-		lipgloss.NewStyle().Foreground(colorDim).Render("esc or ? to close"),
+		row("M-s", "show / hide shell in its worktree"),
+		row("M-z", "zen mode (C-b z to exit)"),
 	}
+	right := []string{
+		sec("review"),
+		row("M-v", "review the agent's changes"),
+		row("  m", "merge into your branch"),
+		row("  x", "discard agent, worktree and branch"),
+		row("  s", "send back a note"),
+		row("  n / N", "next / prev file"),
+		row("  r", "reload changes"),
+		sec("icons"),
+		icon("◐", colorWarn, "waiting for you"),
+		icon("✓", colorOK, "finished since you last looked"),
+		icon("○", colorDim, "idle"),
+		icon("✕", colorErr, "stopped (enter resumes)"),
+		sec("with mux focused"),
+		row("c / C", "copy worktree path / branch name"),
+		row("f", "open worktree in file manager"),
+		row("y / p", "yank output / paste to agent"),
+		row("? / q", "help / quit (M-q anywhere)"),
+	}
+
+	width := colW + 4
+	body := strings.Join(append(append([]string{}, left...), right...), "\n")
+	if wide {
+		width = 2*colW + 4
+		body = lipgloss.JoinHorizontal(lipgloss.Top,
+			lipgloss.NewStyle().Width(colW).Render(strings.Join(left, "\n")),
+			lipgloss.NewStyle().Width(colW).Render(strings.Join(right, "\n")))
+	}
+	title := gradient("mux keybindings", true)
+	lines := []string{title, dim.Render("alt chords work anywhere, even inside an agent"), body}
+	pad := 1
+	if compact {
+		pad = 0
+	} else {
+		lines = append(lines, "")
+	}
+	lines = append(lines, dim.Render("esc or ? to close"))
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorBorder).
-		Padding(1, 2).
-		Width(70).
+		Padding(pad, 2).
+		Width(width).
 		Render(strings.Join(lines, "\n"))
 }
 

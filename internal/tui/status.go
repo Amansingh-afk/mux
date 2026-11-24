@@ -161,7 +161,26 @@ func (m Model) classifyAndNotify(c captureRec) {
 			reason = n.Reason
 		}
 	}
-	rec := agentStatusRec{status: s, hash: h, stableTicks: t, lastNotify: prev.lastNotify, tokens: prev.tokens}
+	// claude also notifies when a finished agent sits idle; that's still
+	// "done", not a permission prompt, unless it worked in between.
+	if s == session.StatusWaiting && reason == session.ReasonPermission &&
+		prev.status == session.StatusWaiting && prev.reason == session.ReasonDone {
+		reason = session.ReasonDone
+	}
+	rec := agentStatusRec{
+		status: s, hash: h, stableTicks: t, lastNotify: prev.lastNotify,
+		tokens: prev.tokens, reason: reason, unread: prev.unread,
+	}
+	switch {
+	case s == session.StatusActive:
+		rec.activeTicks = prev.activeTicks + 1
+		rec.unread = false
+	case prev.activeTicks >= 2 && reason != session.ReasonPermission:
+		rec.unread = true
+	}
+	if id == m.rightPaneAgent {
+		rec.unread = false
+	}
 	if c.tokens >= 0 {
 		rec.tokens = c.tokens
 	}
@@ -186,6 +205,9 @@ func (m Model) statusIcon(id string) string {
 		return styleDot["dead"].Render("✕")
 	}
 	rec := m.statusRec[id]
+	if rec.unread {
+		return lipgloss.NewStyle().Foreground(colorOK).Bold(true).Render("✓")
+	}
 	switch rec.status {
 	case session.StatusActive:
 		frame := session.SpinnerFrames[m.spinnerFrame%len(session.SpinnerFrames)]

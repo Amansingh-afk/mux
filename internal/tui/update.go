@@ -131,6 +131,12 @@ func (m Model) dispatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case reviewLoadedMsg:
+		return m.reviewLoaded(msg)
+
+	case reviewLandedMsg:
+		return m.reviewLanded(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -159,6 +165,15 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.mode == modeAdopt {
 		return m.handleAdopt(k)
+	}
+	if m.mode == modeReview {
+		return m.handleReview(k)
+	}
+	if m.mode == modeInbox {
+		return m.handleInbox(k)
+	}
+	if m.mode == modeConfirm {
+		return m.handleConfirm(k)
 	}
 	if m.mode == modeHelp {
 		switch k.String() {
@@ -240,7 +255,11 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// floating shell in the selected agent's worktree; again to hide.
 		// A standalone shell agent is still in the M-n picker.
 		if key, dir, title := m.shellTarget(); dir != "" {
-			_ = session.ToggleShellPopup(key, dir, title)
+			// off the loop: the popup command blocks until it closes.
+			return m, func() tea.Msg {
+				_ = session.ToggleShellPopup(key, dir, title)
+				return nil
+			}
 		}
 		return m, nil
 
@@ -251,6 +270,12 @@ func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			_ = session.OpenDir(dir)
 		}
 		return m, nil
+
+	case "alt+v":
+		return m.startReview()
+
+	case "alt+a":
+		return m.startInbox()
 
 	case "alt+i":
 		m.focusForOverlay()

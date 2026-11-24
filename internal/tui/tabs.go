@@ -39,6 +39,9 @@ func (m *Model) pushTabBar() {
 				// agents that need you, visible without switching tabs.
 				b.WriteString(fmt.Sprintf("#[fg=colour214]◐%d #[default]", n))
 			}
+			if n := m.unreadIn(snap, path); n > 0 {
+				b.WriteString(fmt.Sprintf("#[fg=colour42]✓%d #[default]", n))
+			}
 		}
 		content = b.String()
 	}
@@ -64,6 +67,22 @@ func (m Model) waitingByProject(snap state.State) map[string]int {
 		}
 	}
 	return out
+}
+
+// unreadIn counts a project's agents that finished since you last looked.
+func (m Model) unreadIn(snap state.State, path string) int {
+	n := 0
+	for _, p := range snap.Projects {
+		if p.Path != path {
+			continue
+		}
+		for _, a := range p.Agents {
+			if m.agentRank(a) == rankUnread {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func (m Model) prevTab() (tea.Model, tea.Cmd) {
@@ -136,21 +155,21 @@ func (m *Model) closeCurrentTab(killAgents bool) tea.Cmd {
 	}
 	path := snap.OpenTabs[m.activeTab]
 	if killAgents {
+		var agents []state.Agent
 		for _, proj := range snap.Projects {
-			if proj.Path != path {
-				continue
-			}
-			for _, a := range proj.Agents {
-				_ = session.Kill(a.ID)
-				if a.Worktree != "" {
-					_ = session.RemoveWorktree(path, a.Worktree, a.Branch, session.BranchMerged(path, a.Branch))
-				}
-				m.store.RemoveAgent(path, a.ID)
+			if proj.Path == path {
+				agents = append(agents, proj.Agents...)
 			}
 		}
+		return m.deleteOrConfirm(path, "close tab and delete all its agents?", agents,
+			func(m *Model) tea.Cmd { return m.closeTab(path) })
 	}
+	return m.closeTab(path)
+}
+
+func (m *Model) closeTab(path string) tea.Cmd {
 	m.store.CloseTab(path)
-	snap = m.store.Snapshot()
+	snap := m.store.Snapshot()
 	if m.activeTab >= len(snap.OpenTabs) {
 		m.activeTab = len(snap.OpenTabs) - 1
 	}

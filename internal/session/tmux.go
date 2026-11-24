@@ -234,12 +234,16 @@ func NudgeResize(id string, w, h int) {
 
 func Kill(id string) error {
 	ForgetResize(id)
-	return tmux("kill-session", "-t", id).Run()
+	return tmux("kill-session", "-t", exact(id)).Run()
 }
 
 func Exists(id string) bool {
-	return tmux("has-session", "-t", id).Run() == nil
+	return tmux("has-session", "-t", exact(id)).Run() == nil
 }
+
+// exact makes a -t session target match only that name. tmux otherwise
+// falls back to prefix matching, so "..._1" would hit "..._10".
+func exact(id string) string { return "=" + id }
 
 func List() ([]string, error) {
 	out, err := tmux("list-sessions", "-F", "#{session_name}").Output()

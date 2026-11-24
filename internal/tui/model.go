@@ -18,6 +18,9 @@ const (
 	modeRenameAgent
 	modeHelp
 	modeAdopt
+	modeReview
+	modeInbox
+	modeConfirm
 )
 
 type Model struct {
@@ -34,6 +37,9 @@ type Model struct {
 	adoptItems   []adoptItem
 	adoptCur     int
 	adoptLoading bool
+	review       reviewState
+	inbox        inboxState
+	confirm      confirmState
 	aliveCache   map[string]bool
 	statusRec    map[string]agentStatusRec
 	// diffStats caches each worktree agent's +/- line counts for the
@@ -77,6 +83,13 @@ type agentStatusRec struct {
 	// tokens is the agent's cumulative transcript token usage, refreshed on
 	// the status tick. 0 = unknown (no transcript / uuid not captured yet).
 	tokens int64
+	// reason is why the provider says it is waiting, when known.
+	reason string
+	// activeTicks counts consecutive active ticks, so a one-tick repaint
+	// (resize) ending doesn't read as finished work.
+	activeTicks int
+	// unread: finished work while not on screen.
+	unread bool
 }
 
 type tickMsg time.Time

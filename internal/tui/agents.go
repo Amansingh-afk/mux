@@ -171,25 +171,16 @@ func (m *Model) killCurrentAgent() tea.Cmd {
 	wasVisible := m.rightPaneAgent == a.ID
 	dead := a.Dead || !m.aliveCache[a.ID]
 	if dead {
-		// already dead — second d forgets for real. Worktree goes with it;
-		// the branch survives unless it's fully merged (unmerged commits are
-		// never silently deleted).
-		if a.Worktree != "" {
-			merged := session.BranchMerged(p.Path, a.Branch)
-			_ = session.RemoveWorktree(p.Path, a.Worktree, a.Branch, merged)
-		}
-		m.store.RemoveAgent(p.Path, a.ID)
-		session.KillShell(a.ID)
-		if m.sidebarCur > 0 {
-			m.sidebarCur--
-		}
-	} else {
-		// soft-delete: kill tmux but keep state so enter can resume.
-		_ = session.Kill(a.ID)
-		session.KillShell(a.ID)
-		m.store.MarkAgentDead(p.Path, a.ID)
-		delete(m.aliveCache, a.ID)
+		// already dead: second press forgets for real. The worktree goes with
+		// it (asking first if files would be lost); the branch survives unless
+		// it's fully merged.
+		return m.deleteOrConfirm(p.Path, "forget "+a.Name+"?", []state.Agent{*a}, (*Model).afterRemove)
 	}
+	// soft-delete: kill tmux but keep state so enter can resume.
+	_ = session.Kill(a.ID)
+	session.KillShell(a.ID)
+	m.store.MarkAgentDead(p.Path, a.ID)
+	delete(m.aliveCache, a.ID)
 	_ = m.store.Save()
 	// the right-pane attach to a killed session ends with tmux drawing a
 	// "[exited]" stub; swap it to the next agent or hide it entirely.
@@ -309,12 +300,6 @@ func (m Model) pasteIntoCurrent() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// projectFragment derives the session-name fragment for a project from its
-// path rather than its display name (basename), so two projects with the
-// same basename in different directories never collide. The basename keeps
-// session ids readable; a short FNV-32a hash of the full path (4 hex chars)
-// makes them distinct. session.SessionID sanitizes the fragment, matching
-// prior behavior.
 // shellTarget picks where M-s and f point: the selected agent's directory
 // (its worktree when it has one), else the current project. key names the
 // popup shell session; title labels its border. dir is "" when there is no
@@ -341,6 +326,12 @@ func (m Model) shellTarget() (key, dir, title string) {
 	return projectFragment(p.Path), p.Path, "shell · " + filepath.Base(p.Path)
 }
 
+// projectFragment derives the session-name fragment for a project from its
+// path rather than its display name (basename), so two projects with the
+// same basename in different directories never collide. The basename keeps
+// session ids readable; a short FNV-32a hash of the full path (4 hex chars)
+// makes them distinct. session.SessionID sanitizes the fragment, matching
+// prior behavior.
 func projectFragment(path string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(path))
